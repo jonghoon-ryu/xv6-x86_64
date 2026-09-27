@@ -265,6 +265,10 @@ devintr(uint64 trapno)
     uartintr();
     lapiceoi();
     return 1;
+  } else if (trapno == T_IRQ0 + IRQ_KBD) {
+    kbdintr();
+    lapiceoi();
+    return 1;
   } else if (trapno == T_IRQ0 + IRQ_ERROR) {
     printk("local APIC error\n");
     lapiceoi();

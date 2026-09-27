@@ -187,6 +187,14 @@ void            microdelay(int);
 void            ioapicinit(void);
 void            ioapicenable(int, int);
 
+// fbcons.c
+void            fbconsinit(void);
+void            fbconsputc(int);
+
+// kbd.c
+void            kbdinit(void);
+void            kbdintr(void);
+
 // ramdisk.c
 void            ramdisk_init(void);
 void            ramdisk_rw(struct buf *, int);

@@ -246,6 +246,7 @@ typedef uint64 *pagetable_t; // 512 PTEs
 #define PTE_V   (1L << 0) // present
 #define PTE_W   (1L << 1) // writeable
 #define PTE_U   (1L << 2) // user can access
+#define PTE_PWT (1L << 3) // write-through
 #define PTE_PCD (1L << 4) // cache disable, for device registers
 #define PTE_R   (1L << 9)  // software: readable
 #define PTE_X   (1L << 10) // software: executable

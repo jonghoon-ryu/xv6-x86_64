@@ -5,6 +5,8 @@
 #include "bootinfo.h"
 #include "defs.h"
 
+extern struct bootinfo bootinfo;
+
 volatile static int started = 0;
 
 static void startothers(void);
@@ -19,6 +21,8 @@ main()
     printk("\n");
     printk("xv6 kernel is booting\n");
     printk("\n");
+    printk("screen: %dx%d, frame buffer at %p\n", (int)bootinfo.fb_width,
+           (int)bootinfo.fb_height, (void *)bootinfo.fb_base);
     kinit();            // physical page allocator
     acpiinit();         // find CPUs and interrupt controllers
     kvminit();          // create kernel page table
@@ -30,6 +34,8 @@ main()
     lapicinit();        // this CPU's interrupt controller and timer
     acpi_bspfirst(lapicid()); // make this CPU cpu 0
     ioapicenable(IRQ_COM1, 0); // ask for serial port interrupts
+    kbdinit();          // PS/2 keyboard
+    ioapicenable(IRQ_KBD, 0);  // ask for keyboard interrupts
     binit();            // buffer cache
     iinit();            // inode table
     fileinit();         // file table
@@ -56,7 +62,6 @@ main()
 static void
 startothers(void)
 {
-  extern struct bootinfo bootinfo;
   extern pagetable_t kernel_pagetable;
   extern char stack0[];
   extern volatile int apstarted;

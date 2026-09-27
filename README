@@ -17,6 +17,8 @@ x86-64 files name their RISC-V counterparts.
   harts start together           entryother.S wakes the other CPUs
   memory-mapped UART             16550 UART at I/O port 0x3F8 (COM1)
   virtio disk                    RAM disk (fs.img, loaded by the UEFI loader)
+  (UART console only)            also a screen console (fbcons.c) and
+                                 PS/2 keyboard (kbd.c)
 
 To build and run, you need gcc and binutils for x86-64, clang and
 lld (for the UEFI loader), mtools, qemu-system-x86_64, and the OVMF
@@ -24,8 +26,10 @@ UEFI firmware (Ubuntu packages: build-essential clang lld mtools
 qemu-system-x86 ovmf). Then:
 
   make qemu            boot in qemu (CPUS=n for n CPUs)
-  make vbox            boot in VirtualBox; the console is the unix
-                       socket vbox/serial.sock
+  make vbox            boot in a VirtualBox window and type into it;
+                       the serial console output goes to vbox/serial.log.
+                       VBOXTYPE=headless for no window: the serial
+                       console is then the unix socket vbox/serial.sock
   esp.img              is a FAT boot partition image that a UEFI
                        machine can boot
 

@@ -31,7 +31,11 @@ after 06aad25, the last commit of the original; they were written by
 Claude (an AI assistant made by Anthropic) and are distributed under the
 same terms as above.
 
-kernel/lapic.c and kernel/ioapic.c are adapted from the x86 version
-of xv6 (https://github.com/mit-pdos/xv6-public), which is also
+kernel/lapic.c, kernel/ioapic.c, kernel/kbd.c, and kernel/kbd.h are
+adapted from the x86 version of xv6 (https://github.com/mit-pdos/xv6-public), which is also
 Copyright Frans Kaashoek, Robert Morris, Russ Cox, Massachusetts
 Institute of Technology, under the same terms.
+
+kernel/font.h is generated from the Spleen 16x32 font, Copyright (c)
+2018-2026 Frederic Cambus (https://github.com/fcambus/spleen), under
+the BSD 2-Clause license, whose text is in kernel/font.h.

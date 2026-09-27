@@ -7,6 +7,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "fs.h"
+#include "bootinfo.h"
 
 /*
  * the kernel's page table.
@@ -18,6 +19,7 @@ extern char etext[]; // kernel.ld sets this to end of kernel code.
 extern char trampoline[]; // trampoline.S
 
 extern uint64 lapicaddr, ioapicaddr; // acpi.c
+extern struct bootinfo bootinfo;     // start.c
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -31,6 +33,14 @@ kvmmake(void)
   // local APIC and IOAPIC registers (the PLIC's job on RISC-V).
   kvmmap(kpgtbl, lapicaddr, lapicaddr, PGSIZE, PTE_R | PTE_W | PTE_PCD);
   kvmmap(kpgtbl, ioapicaddr, ioapicaddr, PGSIZE, PTE_R | PTE_W | PTE_PCD);
+
+  // the screen's frame buffer, for fbcons.c. (one below PHYSTOP
+  // is already mapped with the rest of RAM.)
+  if (bootinfo.fb_base >= PHYSTOP) {
+    uint64 fb = PGROUNDDOWN(bootinfo.fb_base);
+    uint64 fbend = PGROUNDUP(bootinfo.fb_base + bootinfo.fb_size);
+    kvmmap(kpgtbl, fb, fb, fbend - fb, PTE_R | PTE_W);
+  }
 
   // low memory, below the kernel: the loader's bootinfo and
   // memory map, and the page where other CPUs start, which

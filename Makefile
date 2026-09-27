@@ -32,7 +32,9 @@ OBJS = \
   $K/lapic.o \
   $K/ioapic.o \
   $K/ramdisk.o \
-  $K/entryother.o
+  $K/entryother.o \
+  $K/fbcons.o \
+  $K/kbd.o
 
 # the kernel and user programs are built with the host's
 # x86-64 gcc and binutils; the UEFI loader with clang and lld,

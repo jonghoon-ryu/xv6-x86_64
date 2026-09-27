@@ -1,5 +1,6 @@
 //
-// Console input and output, to the uart.
+// Console input and output, to the uart and,
+// on x86-64 PCs, the screen (fbcons.c) and keyboard (kbd.c).
 // Reads are line at a time.
 // Implements special input characters:
 //   newline -- end of line
@@ -36,10 +37,15 @@ consputc(int c)
 {
   if (c == BACKSPACE) {
     // if the user typed backspace, overwrite with a space.
+    // the screen first: a serial line may be slow, or blocked.
+    fbconsputc('\b');
+    fbconsputc(' ');
+    fbconsputc('\b');
     uartputc_sync('\b');
     uartputc_sync(' ');
     uartputc_sync('\b');
   } else {
+    fbconsputc(c);
     uartputc_sync(c);
   }
 }
@@ -71,6 +77,9 @@ consolewrite(int user_src, uint64 src, int n)
       nn = n - i;
     if (either_copyin(buf, user_src, src + i, nn) == -1)
       break;
+    // the screen first: a serial line may be slow, or blocked.
+    for (int k = 0; k < nn; k++)
+      fbconsputc(buf[k]);
     uartwrite(buf, nn);
     i += nn;
   }
@@ -195,6 +204,7 @@ consoleinit(void)
   initlock(&cons.lock, "cons");
 
   uartinit();
+  fbconsinit();
 
   // connect read and write system calls
   // to consoleread and consolewrite.
