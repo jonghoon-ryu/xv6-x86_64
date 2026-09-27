@@ -6,7 +6,8 @@
 #include "param.h"
 #include "memlayout.h"
 #include "spinlock.h"
-#include "riscv.h"
+#include "x86.h"
+#include "bootinfo.h"
 #include "defs.h"
 
 void freerange(void *pa_start, void *pa_end);
@@ -23,11 +24,30 @@ struct {
   struct run *freelist;
 } kmem;
 
+extern struct bootinfo bootinfo;
+
+// a PC's RAM has holes, and UEFI has put things in some of it,
+// so free only the pages that the UEFI memory map says are
+// unused, between the end of the kernel and PHYSTOP.
+// (RISC-V xv6 frees everything from end to PHYSTOP.)
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void *)PHYSTOP);
+  for (uint64 off = 0; off < bootinfo.memmap_size;
+       off += bootinfo.memmap_descsize) {
+    struct efi_memdesc *d = (struct efi_memdesc *)(bootinfo.memmap + off);
+    if (d->type != EFI_CONVENTIONAL_MEMORY)
+      continue;
+    uint64 start = d->phys_start;
+    uint64 stop = d->phys_start + d->npages * PGSIZE;
+    if (start < (uint64)end)
+      start = (uint64)end;
+    if (stop > PHYSTOP)
+      stop = PHYSTOP;
+    if (start < stop)
+      freerange((void *)start, (void *)stop);
+  }
 }
 
 void

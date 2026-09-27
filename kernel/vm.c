@@ -2,7 +2,7 @@
 #include "types.h"
 #include "memlayout.h"
 #include "elf.h"
-#include "riscv.h"
+#include "x86.h"
 #include "defs.h"
 #include "spinlock.h"
 #include "proc.h"
@@ -17,6 +17,8 @@ extern char etext[]; // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
+extern uint64 lapicaddr, ioapicaddr; // acpi.c
+
 // Make a direct-map page table for the kernel.
 pagetable_t
 kvmmake(void)
@@ -26,14 +28,14 @@ kvmmake(void)
   kpgtbl = (pagetable_t)kalloc();
   memset(kpgtbl, 0, PGSIZE);
 
-  // uart registers
-  kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+  // local APIC and IOAPIC registers (the PLIC's job on RISC-V).
+  kvmmap(kpgtbl, lapicaddr, lapicaddr, PGSIZE, PTE_R | PTE_W | PTE_PCD);
+  kvmmap(kpgtbl, ioapicaddr, ioapicaddr, PGSIZE, PTE_R | PTE_W | PTE_PCD);
 
-  // virtio mmio disk interface
-  kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
-
-  // PLIC
-  kvmmap(kpgtbl, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
+  // low memory, below the kernel: the loader's bootinfo and
+  // memory map, and the page where other CPUs start.
+  // page 0 stays unmapped, to catch null pointer uses.
+  kvmmap(kpgtbl, PGSIZE, PGSIZE, KERNBASE - PGSIZE, PTE_R | PTE_W);
 
   // map kernel text executable and read-only.
   kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
@@ -45,6 +47,9 @@ kvmmake(void)
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+  // map the IDT, GDT, and TSS just below it (see memlayout.h).
+  kvmmap(kpgtbl, CPUTABLES, (uint64)&cputables, PGSIZE, PTE_R | PTE_W);
 
   // allocate and map a kernel stack for each process.
   proc_mapstacks(kpgtbl);
@@ -74,23 +79,21 @@ kvminit(void)
 void
 kvminithart()
 {
-  // wait for any previous writes to the page table memory to finish.
-  sfence_vma();
-
-  w_satp(MAKE_SATP(kernel_pagetable));
-
-  // flush stale entries from the TLB.
-  sfence_vma();
+  // writing cr3 also flushes stale entries from the TLB.
+  // x86 keeps memory writes in order, so no fence is needed
+  // before it.
+  w_cr3(MAKE_CR3(kernel_pagetable));
 }
 
 // Return the address of the PTE in page table pagetable
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page-table pages.
 //
-// The risc-v Sv39 scheme has three levels of page-table
-// pages. A page-table page contains 512 64-bit PTEs.
-// A 64-bit virtual address is split into five fields:
-//   39..63 -- must be zero.
+// The x86-64 scheme has four levels of page-table
+// pages (RISC-V Sv39 has three). A page-table page contains
+// 512 64-bit PTEs. A 64-bit virtual address is split into six fields:
+//   48..63 -- must equal bit 47; xv6 uses only addresses below MAXVA.
+//   39..47 -- 9 bits of level-3 index.
 //   30..38 -- 9 bits of level-2 index.
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
@@ -101,7 +104,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   if (va >= MAXVA)
     panic("walk");
 
-  for (int level = 2; level > 0; level--) {
+  for (int level = 3; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if (*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
@@ -109,7 +112,9 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       if (!alloc || (pagetable = (pde_t *)kalloc()) == 0)
         return 0;
       memset(pagetable, 0, PGSIZE);
-      *pte = PA2PTE(pagetable) | PTE_V;
+      // x86 checks the W and U bits at every level, so let
+      // the leaf PTE alone decide.
+      *pte = PA2PTE(pagetable) | PTE_V | PTE_W | PTE_U;
     }
   }
   return &pagetable[PX(0, va)];
@@ -166,6 +171,9 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
     if (*pte & PTE_V)
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
+    // x86 pages are executable unless marked otherwise.
+    if ((perm & PTE_X) == 0)
+      *pte |= PTE_NX;
     if (a == last)
       break;
     a += PGSIZE;
@@ -261,22 +269,31 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
 
 // Recursively free page-table pages.
 // All leaf mappings must already have been removed.
-void
-freewalk(pagetable_t pagetable)
+// x86 PTEs that point to lower-level page tables carry
+// permission bits, so unlike RISC-V a PTE's bits cannot tell
+// whether it is a leaf; the level does.
+static void
+freewalk_level(pagetable_t pagetable, int level)
 {
   // there are 2^9 = 512 PTEs in a page table.
   for (int i = 0; i < 512; i++) {
     pte_t pte = pagetable[i];
-    if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+    if ((pte & PTE_V) && level > 0) {
       // this PTE points to a lower-level page table.
       uint64 child = PTE2PA(pte);
-      freewalk((pagetable_t)child);
+      freewalk_level((pagetable_t)child, level - 1);
       pagetable[i] = 0;
     } else if (pte & PTE_V) {
       panic("freewalk: leaf");
     }
   }
   kfree((void *)pagetable);
+}
+
+void
+freewalk(pagetable_t pagetable)
+{
+  freewalk_level(pagetable, 3);
 }
 
 // Free user memory pages,

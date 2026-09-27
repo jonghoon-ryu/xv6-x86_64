@@ -1,7 +1,7 @@
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
-#include "riscv.h"
+#include "x86.h"
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
@@ -64,7 +64,7 @@ procinit(void)
 int
 cpuid()
 {
-  int id = r_tp();
+  int id = r_gsbase();
   return id;
 }
 
@@ -144,7 +144,9 @@ found:
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
-  p->context.sp = p->kstack + PGSIZE;
+  // x86-64 functions expect the stack to be aligned as if a
+  // return address had just been pushed.
+  p->context.sp = p->kstack + PGSIZE - 8;
 
   return p;
 }
@@ -192,10 +194,20 @@ proc_pagetable(struct proc *p)
     return 0;
   }
 
-  // map the trapframe page just below the trampoline page, for
+  // map the IDT, GDT, and TSS, which the CPU reads when a trap
+  // arrives from user space (see memlayout.h). not PTE_U.
+  if (mappages(pagetable, CPUTABLES, PGSIZE, (uint64)&cputables,
+               PTE_R | PTE_W) < 0) {
+    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+    uvmfree(pagetable, 0);
+    return 0;
+  }
+
+  // map the trapframe page just below the CPU tables page, for
   // trampoline.S.
   if (mappages(pagetable, TRAPFRAME, PGSIZE, (uint64)(p->trapframe),
                PTE_R | PTE_W) < 0) {
+    uvmunmap(pagetable, CPUTABLES, 1, 0);
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
     uvmfree(pagetable, 0);
     return 0;
@@ -210,6 +222,7 @@ void
 proc_freepagetable(pagetable_t pagetable, uint64 sz)
 {
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+  uvmunmap(pagetable, CPUTABLES, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
 }
@@ -279,7 +292,7 @@ kfork(void)
   *(np->trapframe) = *(p->trapframe);
 
   // Cause fork to return 0 in the child.
-  np->trapframe->a0 = 0;
+  np->trapframe->rax = 0;
 
   // increment reference counts on open file descriptors.
   for (i = 0; i < NOFILE; i++)
@@ -464,7 +477,10 @@ scheduler(void)
     }
     if (found == 0) {
       // nothing to run; stop running on this core until an interrupt.
-      asm volatile("wfi");
+      // unlike RISC-V's wfi, hlt waits for an interrupt only if
+      // interrupts are enabled. sti takes effect after the next
+      // instruction, so no interrupt can slip in between.
+      asm volatile("sti; hlt");
     }
   }
 }
@@ -528,18 +544,18 @@ forkret(void)
     fsinit(ROOTDEV);
 
     // We can invoke kexec() now that file system is initialized.
-    // Put the return value (argc) of kexec into a0.
-    p->trapframe->a0 = kexec("/init", (char *[]){"/init", 0});
-    if (p->trapframe->a0 == -1) {
+    // Put the return value (argc) of kexec into rax.
+    p->trapframe->rax = kexec("/init", (char *[]){"/init", 0});
+    if (p->trapframe->rax == -1) {
       panic("exec");
     }
   }
 
   // return to user space, mimicing usertrap()'s return.
   prepare_return();
-  uint64 satp = MAKE_SATP(p->pagetable);
+  uint64 cr3 = MAKE_CR3(p->pagetable);
   uint64 trampoline_userret = TRAMPOLINE + (userret - trampoline);
-  ((void (*)(uint64))trampoline_userret)(satp);
+  ((void (*)(uint64))trampoline_userret)(cr3);
 }
 
 // Register current process as waiting for wakeups on chan.

@@ -4,7 +4,7 @@
 #include "param.h"
 #include "memlayout.h"
 #include "spinlock.h"
-#include "riscv.h"
+#include "x86.h"
 #include "proc.h"
 #include "defs.h"
 
@@ -94,8 +94,8 @@ push_off(void)
 {
   // disable interrupts to prevent an involuntary context
   // switch while using mycpu().
-  uint64 flags = rc_sstatus(SSTATUS_SIE);
-  int old = !!(flags & SSTATUS_SIE);
+  uint64 flags = intr_off_save();
+  int old = !!(flags & FL_IF);
 
   if (mycpu()->noff == 0)
     mycpu()->intena = old;

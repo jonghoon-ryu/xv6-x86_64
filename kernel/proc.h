@@ -1,21 +1,15 @@
 // Saved registers for kernel context switches.
 struct context {
-  uint64 ra;
+  uint64 ra; // where swtch() returns to
   uint64 sp;
 
-  // callee-saved
-  uint64 s0;
-  uint64 s1;
-  uint64 s2;
-  uint64 s3;
-  uint64 s4;
-  uint64 s5;
-  uint64 s6;
-  uint64 s7;
-  uint64 s8;
-  uint64 s9;
-  uint64 s10;
-  uint64 s11;
+  // callee-saved (x86-64 System V ABI)
+  uint64 rbx;
+  uint64 rbp;
+  uint64 r12;
+  uint64 r13;
+  uint64 r14;
+  uint64 r15;
 };
 
 // Per-CPU state.
@@ -28,52 +22,61 @@ struct cpu {
 
 extern struct cpu cpus[NCPU];
 
+// the tables the CPU consults on a trap from user space, while the
+// user page table is still in use. trap.c keeps them in one page,
+// mapped at CPUTABLES in every page table (see memlayout.h).
+struct cputables {
+  struct gatedesc uidt[NIDT]; // IDT for traps from user space
+  struct {
+    uint64 gdt[NSEGS]; // this CPU's segment descriptors
+    struct taskstate ts;
+  } __attribute__((aligned(16))) cpu[NCPU];
+};
+
+extern struct cputables cputables;
+
 // per-process data for the trap handling code in trampoline.S.
-// sits in a page by itself just under the trampoline page in the
+// sits in a page by itself just under the CPU tables page in the
 // user page table. not specially mapped in the kernel page table.
-// uservec in trampoline.S saves user registers in the trapframe,
-// then initializes registers from the trapframe's
-// kernel_sp, kernel_hartid, kernel_satp, and jumps to kernel_trap.
-// prepare_return() and userret in trampoline.S set up
+//
+// on a trap from user space, the CPU switches to the stack whose
+// top the TSS names, which is the end of this structure at
+// TRAPFRAME. so the CPU itself pushes ss..rip (and maybe err),
+// then uservec pushes trapno (via the vector stub) and the
+// general-purpose registers, filling in the structure from the
+// bottom up. uservec then initializes registers from the
+// trapframe's kernel_sp, kernel_hartid, kernel_cr3, and jumps to
+// kernel_trap. prepare_return() and userret in trampoline.S set up
 // the trapframe's kernel_*, restore user registers from the
-// trapframe, switch to the user page table, and enter user space.
+// trapframe, switch to the user page table, and enter user space
+// with iretq.
 struct trapframe {
-  /*   0 */ uint64 kernel_satp;   // kernel page table
+  /*   0 */ uint64 kernel_cr3;    // kernel page table
   /*   8 */ uint64 kernel_sp;     // top of process's kernel stack
   /*  16 */ uint64 kernel_trap;   // usertrap()
-  /*  24 */ uint64 epc;           // saved user program counter
-  /*  32 */ uint64 kernel_hartid; // saved kernel tp
-  /*  40 */ uint64 ra;
-  /*  48 */ uint64 sp;
-  /*  56 */ uint64 gp;
-  /*  64 */ uint64 tp;
-  /*  72 */ uint64 t0;
-  /*  80 */ uint64 t1;
-  /*  88 */ uint64 t2;
-  /*  96 */ uint64 s0;
-  /* 104 */ uint64 s1;
-  /* 112 */ uint64 a0;
-  /* 120 */ uint64 a1;
-  /* 128 */ uint64 a2;
-  /* 136 */ uint64 a3;
-  /* 144 */ uint64 a4;
-  /* 152 */ uint64 a5;
-  /* 160 */ uint64 a6;
-  /* 168 */ uint64 a7;
-  /* 176 */ uint64 s2;
-  /* 184 */ uint64 s3;
-  /* 192 */ uint64 s4;
-  /* 200 */ uint64 s5;
-  /* 208 */ uint64 s6;
-  /* 216 */ uint64 s7;
-  /* 224 */ uint64 s8;
-  /* 232 */ uint64 s9;
-  /* 240 */ uint64 s10;
-  /* 248 */ uint64 s11;
-  /* 256 */ uint64 t3;
-  /* 264 */ uint64 t4;
-  /* 272 */ uint64 t5;
-  /* 280 */ uint64 t6;
+  /*  24 */ uint64 kernel_hartid; // saved kernel GS base (the cpu id)
+  /*  32 */ uint64 r15;
+  /*  40 */ uint64 r14;
+  /*  48 */ uint64 r13;
+  /*  56 */ uint64 r12;
+  /*  64 */ uint64 r11;
+  /*  72 */ uint64 r10;
+  /*  80 */ uint64 r9;
+  /*  88 */ uint64 r8;
+  /*  96 */ uint64 rdi;
+  /* 104 */ uint64 rsi;
+  /* 112 */ uint64 rbp;
+  /* 120 */ uint64 rdx;
+  /* 128 */ uint64 rcx;
+  /* 136 */ uint64 rbx;
+  /* 144 */ uint64 rax;
+  /* 152 */ uint64 trapno; // pushed by the vector stub
+  /* 160 */ uint64 err;    // pushed by the CPU, or 0 by the stub
+  /* 168 */ uint64 rip;    // user program counter (RISC-V epc)
+  /* 176 */ uint64 cs;
+  /* 184 */ uint64 rflags;
+  /* 192 */ uint64 rsp;    // user stack pointer
+  /* 200 */ uint64 ss;
 };
 
 enum procstate { UNUSED, USED, SLEEPING, RUNNABLE, RUNNING, ZOMBIE };

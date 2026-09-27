@@ -10,3 +10,8 @@ _*
 /user/usys.S
 .gdbinit
 TAGS
+esp.img
+ovmf_vars.fd
+boot/*.o
+boot/*.EFI
+test-xv6.out

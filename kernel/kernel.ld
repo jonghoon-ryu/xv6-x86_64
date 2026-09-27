@@ -1,16 +1,16 @@
-OUTPUT_ARCH( "riscv" )
+OUTPUT_ARCH( "i386:x86-64" )
 ENTRY( _entry )
 
 SECTIONS
 {
   /*
-   * ensure that entry.S / _entry is at 0x80000000,
-   * where qemu's -kernel jumps.
+   * the UEFI loader copies the kernel to KERNBASE (0x100000)
+   * and jumps to _entry.
    */
-  . = 0x80000000;
+  . = 0x100000;
 
   .text : {
-    kernel/entry.o(_entry)
+    kernel/entry.o(.text)
     *(.text .text.*)
     . = ALIGN(0x1000);
     _trampoline = .;
@@ -22,24 +22,24 @@ SECTIONS
 
   .rodata : {
     . = ALIGN(16);
-    *(.srodata .srodata.*) /* do not need to distinguish this from .rodata */
-    . = ALIGN(16);
     *(.rodata .rodata.*)
   }
 
   .data : {
-    . = ALIGN(16);
-    *(.sdata .sdata.*) /* do not need to distinguish this from .data */
     . = ALIGN(16);
     *(.data .data.*)
   }
 
   .bss : {
     . = ALIGN(16);
-    *(.sbss .sbss.*) /* do not need to distinguish this from .bss */
-    . = ALIGN(16);
     *(.bss .bss.*)
+    *(COMMON)
   }
 
+  . = ALIGN(0x1000);
   PROVIDE(end = .);
+
+  /DISCARD/ : {
+    *(.eh_frame .note.GNU-stack .note.gnu.property .comment)
+  }
 }

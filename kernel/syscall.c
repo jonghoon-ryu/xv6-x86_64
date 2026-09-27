@@ -1,7 +1,7 @@
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
-#include "riscv.h"
+#include "x86.h"
 #include "spinlock.h"
 #include "proc.h"
 #include "syscall.h"
@@ -35,19 +35,21 @@ static uint64
 argraw(int n)
 {
   struct proc *p = myproc();
+  // the same registers as Linux on x86-64; usys.pl moves
+  // the fourth argument from rcx to r10.
   switch (n) {
   case 0:
-    return p->trapframe->a0;
+    return p->trapframe->rdi;
   case 1:
-    return p->trapframe->a1;
+    return p->trapframe->rsi;
   case 2:
-    return p->trapframe->a2;
+    return p->trapframe->rdx;
   case 3:
-    return p->trapframe->a3;
+    return p->trapframe->r10;
   case 4:
-    return p->trapframe->a4;
+    return p->trapframe->r8;
   case 5:
-    return p->trapframe->a5;
+    return p->trapframe->r9;
   }
   panic("argraw");
   return -1;
@@ -139,13 +141,13 @@ syscall(void)
   int num;
   struct proc *p = myproc();
 
-  num = p->trapframe->a7;
+  num = p->trapframe->rax;
   if (num > 0 && num < NELEM(syscalls) && syscalls[num]) {
     // Use num to lookup the system call function for num, call it,
-    // and store its return value in p->trapframe->a0
-    p->trapframe->a0 = syscalls[num]();
+    // and store its return value in p->trapframe->rax
+    p->trapframe->rax = syscalls[num]();
   } else {
     printk("%d %s: unknown sys call %d\n", p->pid, p->name, num);
-    p->trapframe->a0 = -1;
+    p->trapframe->rax = -1;
   }
 }

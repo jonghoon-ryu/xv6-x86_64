@@ -1,55 +1,47 @@
 // Physical memory layout
 
-// qemu -machine virt is set up like this,
-// based on qemu's hw/riscv/virt.c:
+// a PC booted by UEFI firmware looks like this:
 //
-// 00001000 -- boot ROM, provided by qemu
-// 02000000 -- CLINT
-// 0C000000 -- PLIC
-// 10000000 -- uart0
-// 10001000 -- virtio disk
-// 80000000 -- qemu's boot ROM loads the kernel here,
-//             then jumps here.
-// unused RAM after 80000000.
+// 00000000 -- low memory: firmware data, and the page
+//             where other CPUs start (see entryother.S)
+// 00100000 -- the UEFI loader (boot/loader.c) copies the
+//             kernel here, then jumps to _entry.
+// the rest of RAM is described by the UEFI memory map;
+// the loader also places fs.img in RAM below PHYSTOP.
+//
+// FEC00000 -- IOAPIC (the ACPI MADT has the real address)
+// FEE00000 -- local APIC (the ACPI MADT has the real address)
 
 // the kernel uses physical memory thus:
-// 80000000 -- entry.S, then kernel text and data
+// 00100000 -- entry.S, then kernel text and data
 // end -- start of kernel page allocation area
 // PHYSTOP -- end RAM used by the kernel
 
-// qemu puts UART registers here in physical memory.
-#define UART0     0x10000000L
-#define UART0_IRQ 10
+// the first PC serial port, which the kernel uses as its console.
+#define COM1 0x3F8
 
-// virtio mmio interface
-#define VIRTIO0     0x10001000
-#define VIRTIO0_IRQ 1
+// the kernel is linked to run here.
+#define KERNBASE 0x100000L
 
-// core-local interrupt controller (CLINT)
-#define CLINT_BASE  0x02000000L
-#define CLINT(hart) (CLINT_BASE + (hart) * 4)
-
-// qemu puts platform-level interrupt controller (PLIC) here.
-#define PLIC                 0x0c000000L
-#define PLIC_PRIORITY        (PLIC + 0x0)
-#define PLIC_PENDING         (PLIC + 0x1000)
-#define PLIC_SENABLE(hart)   (PLIC + 0x2080 + (hart) * 0x100)
-#define PLIC_SPRIORITY(hart) (PLIC + 0x201000 + (hart) * 0x2000)
-#define PLIC_SCLAIM(hart)    (PLIC + 0x201004 + (hart) * 0x2000)
-
-// the kernel expects there to be RAM
-// for use by the kernel and user pages
-// from physical address 0x80000000 to PHYSTOP.
-#define KERNBASE 0x80000000L
-#define PHYSTOP  (KERNBASE + 128 * 1024 * 1024)
+// the kernel directly maps physical addresses below PHYSTOP,
+// and allocates pages from the free memory there that the
+// UEFI memory map reports.
+#define PHYSTOP (128 * 1024 * 1024L)
 
 // map the trampoline page to the highest address,
 // in both user and kernel space.
 #define TRAMPOLINE (MAXVA - PGSIZE)
 
-// map kernel stacks beneath the trampoline,
+// x86-64 has no RISC-V-style trap vector register: the CPU finds
+// trap handlers through the IDT, and the kernel stack for traps from
+// user space through the TSS, which the GDT points to. those tables
+// must be readable while a user page table is in use, so they live in
+// a page mapped just below the trampoline in every page table.
+#define CPUTABLES (TRAMPOLINE - PGSIZE)
+
+// map kernel stacks beneath the CPU tables,
 // each surrounded by invalid guard pages.
-#define KSTACK(p) (TRAMPOLINE - ((p) + 1) * 2 * PGSIZE)
+#define KSTACK(p) (CPUTABLES - ((p) + 1) * 2 * PGSIZE)
 
 // User memory layout.
 // Address zero first:
@@ -59,5 +51,6 @@
 //   expandable heap
 //   ...
 //   TRAPFRAME (p->trapframe, used by the trampoline)
+//   CPUTABLES (the same page as in the kernel)
 //   TRAMPOLINE (the same page as in the kernel)
-#define TRAPFRAME (TRAMPOLINE - PGSIZE)
+#define TRAPFRAME (CPUTABLES - PGSIZE)

@@ -1,7 +1,7 @@
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
-#include "riscv.h"
+#include "x86.h"
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
@@ -100,7 +100,7 @@ kexec(char *path, char **argv)
   // addresses in ustack[].
   for (argc = 0; argv[argc]; argc++) {
     sp -= strlen(argv[argc]) + 1;
-    sp -= sp % 16; // riscv sp must be 16-byte aligned
+    sp -= sp % 16; // keep sp 16-byte aligned
     if (sp < stackbase)
       goto bad;
     if (copyout(pagetable, sz, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
@@ -118,10 +118,20 @@ kexec(char *path, char **argv)
       0)
     goto bad;
 
-  // a0 and a1 contain arguments to user main(argc, argv)
-  // argc is returned via the system call return
-  // value, which goes in a0.
-  p->trapframe->a1 = sp;
+  // rdi and rsi contain arguments to user start(argc, argv).
+  // unlike RISC-V, the system call return value (rax) is
+  // not the first argument register, so set rdi too.
+  p->trapframe->rdi = argc;
+  p->trapframe->rsi = sp;
+
+  // x86-64 functions expect to find a return address on the
+  // stack at entry; start() never returns, so push a zero.
+  uint64 zero = 0;
+  sp -= sizeof(uint64);
+  if (sp < stackbase)
+    goto bad;
+  if (copyout(pagetable, sz, sp, (char *)&zero, sizeof(uint64)) < 0)
+    goto bad;
 
   // Save program name for debugging.
   for (last = s = path; *s; s++)
@@ -133,11 +143,12 @@ kexec(char *path, char **argv)
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
   p->sz = sz;
-  p->trapframe->epc = elf.entry; // initial program counter = ulib.c:start()
-  p->trapframe->sp = sp;         // initial stack pointer
+  p->trapframe->rip = elf.entry; // initial program counter = ulib.c:start()
+  p->trapframe->rsp = sp;        // initial stack pointer
+  p->trapframe->rflags = FL_IF;  // no leftover flags, e.g. single-step
   proc_freepagetable(oldpagetable, oldsz);
 
-  return argc; // this ends up in a0, the first argument to main(argc, argv)
+  return argc; // this ends up in rax
 
 bad:
   if (pagetable)

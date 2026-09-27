@@ -5,19 +5,17 @@
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
-#include "riscv.h"
+#include "x86.h"
 #include "spinlock.h"
 #include "sleeplock.h"
 #include "proc.h"
 #include "defs.h"
 
-// the UART control registers are memory-mapped
-// at address UART0. this macro returns the
-// address of one of the registers.
-#define Reg(reg) ((volatile unsigned char *)(UART0 + (reg)))
-
-#define ReadReg(reg)     (*(Reg(reg)))
-#define WriteReg(reg, v) (*(Reg(reg)) = (v))
+// on a PC, the UART control registers are in the I/O
+// port space starting at COM1, rather than memory-mapped
+// as on qemu's RISC-V machine.
+#define ReadReg(reg)     (inb(COM1 + (reg)))
+#define WriteReg(reg, v) (outb(COM1 + (reg), (v)))
 
 // the UART control registers.
 // some have different meanings for read vs write.
