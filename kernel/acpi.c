@@ -130,6 +130,19 @@ acpiinit(void)
     panic("acpiinit: no CPUs or IOAPIC");
 }
 
+// put the boot CPU first in apicids[], since its cpu id is 0.
+void
+acpi_bspfirst(int apicid)
+{
+  for (int i = 0; i < ncpu; i++) {
+    if (apicids[i] == apicid) {
+      apicids[i] = apicids[0];
+      apicids[0] = apicid;
+      return;
+    }
+  }
+}
+
 // the IOAPIC input for an ISA IRQ.
 int
 acpi_isairq(int irq)

@@ -35,3 +35,16 @@ start(struct bootinfo *bi)
 
   main();
 }
+
+// set by mpenter() so that startothers() knows the CPU is running.
+volatile int apstarted;
+
+// entryother.S jumps here on each of the other CPUs, in 64-bit
+// mode, on its part of stack0, with the kernel's page table.
+void
+mpenter(uint64 id)
+{
+  w_gsbase(id);
+  __atomic_store_n(&apstarted, 1, __ATOMIC_RELEASE);
+  main();
+}

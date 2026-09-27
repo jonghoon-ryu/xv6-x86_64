@@ -174,6 +174,7 @@ uint64          vmfault(pagetable_t, uint64, uint64, int);
 // acpi.c
 void            acpiinit(void);
 int             acpi_isairq(int);
+void            acpi_bspfirst(int);
 
 // lapic.c
 void            lapicinit(void);

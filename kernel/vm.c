@@ -33,9 +33,10 @@ kvmmake(void)
   kvmmap(kpgtbl, ioapicaddr, ioapicaddr, PGSIZE, PTE_R | PTE_W | PTE_PCD);
 
   // low memory, below the kernel: the loader's bootinfo and
-  // memory map, and the page where other CPUs start.
+  // memory map, and the page where other CPUs start, which
+  // must be executable (entryother.S).
   // page 0 stays unmapped, to catch null pointer uses.
-  kvmmap(kpgtbl, PGSIZE, PGSIZE, KERNBASE - PGSIZE, PTE_R | PTE_W);
+  kvmmap(kpgtbl, PGSIZE, PGSIZE, KERNBASE - PGSIZE, PTE_R | PTE_W | PTE_X);
 
   // map kernel text executable and read-only.
   kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
