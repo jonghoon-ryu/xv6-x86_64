@@ -32,7 +32,9 @@ class QEMU(object):
         self.output = ""
         self.outbytes = bytearray()
         self.reported = 0
-        time.sleep(1)
+        # booting through UEFI firmware takes a few seconds; input
+        # typed before the shell starts would be lost.
+        self.monitor(r'^\$', timeout=60)
 
     def reset_fs(self):
         try:
