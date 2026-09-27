@@ -22,3 +22,16 @@ LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
+
+----
+
+This repository is a copy of xv6-riscv (https://github.com/mit-pdos/xv6-riscv)
+with changes that port it to x86-64 PCs. Those changes are the commits
+after 06aad25, the last commit of the original; they were written by
+Claude (an AI assistant made by Anthropic) and are distributed under the
+same terms as above.
+
+kernel/lapic.c and kernel/ioapic.c are adapted from the x86 version
+of xv6 (https://github.com/mit-pdos/xv6-public), which is also
+Copyright Frans Kaashoek, Robert Morris, Russ Cox, Massachusetts
+Institute of Technology, under the same terms.
