@@ -15,3 +15,4 @@ ovmf_vars.fd
 boot/*.o
 boot/*.EFI
 test-xv6.out
+vbox/

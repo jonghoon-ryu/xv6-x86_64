@@ -1,3 +1,36 @@
+xv6-x86_64: xv6-riscv ported to x86-64 PCs.
+
+This is MIT's xv6-riscv (https://github.com/mit-pdos/xv6-riscv) with
+its machine-dependent parts rewritten for 64-bit x86 PCs that boot
+with UEFI. The machine-independent parts (file system, log, pipes,
+processes, user programs) are unchanged, so the xv6 book still
+describes them; for the machine-dependent parts, the comments in the
+x86-64 files name their RISC-V counterparts.
+
+  RISC-V                         x86-64
+  qemu -kernel, entry.S, start.c boot/loader.c (UEFI), entry.S, start.c
+  Sv39 (3 levels), satp          4-level page tables, cr3
+  stvec, kernelvec.S             IDT, kernelvec.S
+  ecall, trampoline.S            int $64, trampoline.S (+ GDT/TSS in CPUTABLES)
+  tp (hartid)                    GS base MSR
+  PLIC, stimecmp                 IOAPIC, local APIC timer (found via ACPI)
+  harts start together           entryother.S wakes the other CPUs
+  memory-mapped UART             16550 UART at I/O port 0x3F8 (COM1)
+  virtio disk                    RAM disk (fs.img, loaded by the UEFI loader)
+
+To build and run, you need gcc and binutils for x86-64, clang and
+lld (for the UEFI loader), mtools, qemu-system-x86_64, and the OVMF
+UEFI firmware (Ubuntu packages: build-essential clang lld mtools
+qemu-system-x86 ovmf). Then:
+
+  make qemu            boot in qemu (CPUS=n for n CPUs)
+  make vbox            boot in VirtualBox; the console is the unix
+                       socket vbox/serial.sock
+  esp.img              is a FAT boot partition image that a UEFI
+                       machine can boot
+
+--- the original xv6-riscv README follows ---
+
 xv6 is a re-implementation of Dennis Ritchie's and Ken Thompson's Unix
 Version 6 (v6).  xv6 loosely follows the structure and style of v6,
 but is implemented for a modern RISC-V multiprocessor using ANSI C.

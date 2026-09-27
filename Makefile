@@ -185,6 +185,10 @@ QEMUOPTS += -drive format=raw,file=esp.img
 qemu: esp.img ovmf_vars.fd
 	$(QEMU) $(QEMUOPTS)
 
+# boot the same image in a VirtualBox VM (see vbox.sh).
+vbox: esp.img
+	CPUS=$(CPUS) ./vbox.sh
+
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
