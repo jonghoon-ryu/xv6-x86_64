@@ -3,50 +3,20 @@
 #include "memlayout.h"
 #include "x86.h"
 #include "bootinfo.h"
+#include "defs.h"
 
 extern struct bootinfo bootinfo;
 
-// the boot skeleton: just enough to show the kernel is running.
-// the real console (uart.c, console.c, printk.c, fbcons.c) comes
-// back, in C++, as the first conversion step; until then main()
-// talks to the serial port directly and paints the screen.
-
-// [platform: QEMU, VirtualBox] both emulate a 16550 serial port at
-// COM1; make qemu shows it in the terminal, make vbox writes it to
-// vbox/serial.log. [platform: real PC] most PCs have no COM1: the
-// status register then reads 0xFF, which looks "ready", so output
-// just disappears instead of hanging.
-// the 16550 UART registers used here; see uart.c in the C port.
-constexpr int THR = 0;              // transmit holding register
-constexpr int IER = 1;              // interrupt enable register
-constexpr int FCR = 2;              // FIFO control register
-constexpr int LCR = 3;              // line control register
-constexpr int LSR = 5;              // line status register
-constexpr int LCR_BAUD_LATCH = 0x80;
-constexpr int LCR_EIGHT_BITS = 0x03;
-constexpr int LSR_TX_IDLE = 0x20;
+// the boot skeleton, growing one conversion step at a time.
+// step 2: serial output goes through uart.cpp. until printk.cpp
+// (step 3) and fbcons.cpp (step 4) come back, main() still writes
+// strings itself and paints the screen directly.
 
 static void
-earlyuartinit()
+uartputs(const char *s)
 {
-  outb(COM1 + IER, 0x00);           // no interrupts
-  outb(COM1 + LCR, LCR_BAUD_LATCH); // set the baud rate:
-  outb(COM1 + 0, 0x03);             // 38.4K
-  outb(COM1 + 1, 0x00);
-  outb(COM1 + LCR, LCR_EIGHT_BITS); // 8 bits, no parity
-  outb(COM1 + FCR, 0x07);           // reset and enable FIFOs
-}
-
-static void
-earlyputs(const char *s)
-{
-  for (; *s; s++) {
-    if (*s == '\n')
-      earlyputs("\r");
-    while ((inb(COM1 + LSR) & LSR_TX_IDLE) == 0)
-      ;
-    outb(COM1 + THR, *s);
-  }
+  for (; *s; s++)
+    uartputc_sync(*s);
 }
 
 // fill the UEFI frame buffer with one color, so that a VirtualBox
@@ -86,8 +56,8 @@ drawglyph(const uchar glyph[8], uint64 x0, uint64 y0, uint64 scale, uint color)
 void
 main()
 {
-  earlyuartinit();
-  earlyputs("\nxv6 kernel is booting (C++ skeleton)\n");
+  uartinit();
+  uartputs("\nxv6 kernel is booting (C++, step 2)\n");
   paintscreen(0x00203060); // dark blue
 
   // "xv6" in white (the same in RGB and BGR pixel formats),
@@ -97,7 +67,7 @@ main()
   for (int i = 0; i < 3; i++)
     drawglyph(word[i], scale * 8 * (1 + i), scale * 8, scale, 0x00FFFFFF);
 
-  earlyputs("nothing else yet; halting\n");
+  uartputs("nothing else yet; halting\n");
 
   for (;;)
     asm volatile("hlt");

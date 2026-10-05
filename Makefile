@@ -6,7 +6,9 @@ B=boot
 OBJS = \
   $K/entry.o \
   $K/start.o \
-  $K/main.o
+  $K/main.o \
+  $K/string.o \
+  $K/uart.o
 
 # the kernel is built with the host's x86-64 g++ and binutils;
 # the UEFI loader with clang and lld, which can produce the

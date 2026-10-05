@@ -1,0 +1,21 @@
+// declarations of the kernel's functions, one section per file,
+// in the same order as the C version's defs.h. each conversion
+// step adds the section for the file it brings back.
+#pragma once
+
+// string.cpp
+extern "C" {
+void *memset(void *, int, uint64);
+int memcmp(const void *, const void *, uint64);
+void *memmove(void *, const void *, uint64);
+void *memcpy(void *, const void *, uint64);
+}
+char *safestrcpy(char *, const char *, int);
+int strlen(const char *);
+int strncmp(const char *, const char *, uint);
+char *strncpy(char *, const char *, int);
+
+// uart.cpp
+void uartinit();
+void uartputc_sync(int);
+int uartgetc();
