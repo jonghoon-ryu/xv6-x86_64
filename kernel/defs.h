@@ -3,6 +3,16 @@
 // step adds the section for the file it brings back.
 #pragma once
 
+// console.cpp
+void consoleinit();
+void consputc(int);
+
+// printk.cpp
+// format(printf): g++ checks each call's arguments against the
+// format string, as it does for printf. the C version has no check.
+int printk(const char *, ...) __attribute__((format(printf, 1, 2)));
+[[noreturn]] void panic(const char *);
+
 // string.cpp
 extern "C" {
 void *memset(void *, int, uint64);

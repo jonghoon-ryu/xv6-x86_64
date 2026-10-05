@@ -7,6 +7,8 @@ OBJS = \
   $K/entry.o \
   $K/start.o \
   $K/main.o \
+  $K/console.o \
+  $K/printk.o \
   $K/string.o \
   $K/uart.o
 

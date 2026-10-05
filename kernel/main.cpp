@@ -8,15 +8,49 @@
 extern struct bootinfo bootinfo;
 
 // the boot skeleton, growing one conversion step at a time.
-// step 2: serial output goes through uart.cpp. until printk.cpp
-// (step 3) and fbcons.cpp (step 4) come back, main() still writes
-// strings itself and paints the screen directly.
+// step 3: output goes through printk() and the console. until
+// fbcons.cpp (step 4) comes back, it reaches only the serial port,
+// and main() still paints the screen directly.
 
-static void
-uartputs(const char *s)
+// UEFI memory types (the UEFI spec's EFI_MEMORY_TYPE), for the
+// memory map summary below.
+static const char *
+memtype(uint t)
 {
-  for (; *s; s++)
-    uartputc_sync(*s);
+  static const char *names[] = {
+    "reserved", "loader code", "loader data", "boot services code",
+    "boot services data", "runtime code", "runtime data", "free",
+    "unusable", "ACPI tables", "ACPI NVS", "MMIO", "MMIO port", "PAL code",
+    "persistent",
+  };
+  return t < sizeof(names) / sizeof(names[0]) ? names[t] : "other";
+}
+
+// what the loader handed over, and a summary of the UEFI memory map:
+// how many pages of each type. kalloc.cpp will use the free ones.
+static void
+printbootinfo()
+{
+  // bootinfo's fields are unsigned long long (see bootinfo.h);
+  // the casts match them to %p and %lu, which g++ checks.
+  printk("screen: %dx%d, frame buffer at %p\n", (int)bootinfo.fb_width,
+         (int)bootinfo.fb_height, (void *)bootinfo.fb_base);
+  printk("ACPI root pointer at %p\n", (void *)bootinfo.rsdp);
+  printk("fs.img: %lu bytes at %p\n", (uint64)bootinfo.fsimg_size,
+         (void *)bootinfo.fsimg);
+
+  uint64 pages[16] = {};
+  int n = 0;
+  for (uint64 off = 0; off < bootinfo.memmap_size;
+       off += bootinfo.memmap_descsize, n++) {
+    auto d = reinterpret_cast<efi_memdesc *>(bootinfo.memmap + off);
+    pages[d->type < 15 ? d->type : 15] += d->npages;
+  }
+  printk("UEFI memory map: %d entries\n", n);
+  for (uint t = 0; t < 16; t++)
+    if (pages[t] != 0)
+      printk("  %s: %ld pages (%ld MB)\n", memtype(t), pages[t],
+             pages[t] * 4096 / (1024 * 1024));
 }
 
 // fill the UEFI frame buffer with one color, so that a VirtualBox
@@ -56,8 +90,11 @@ drawglyph(const uchar glyph[8], uint64 x0, uint64 y0, uint64 scale, uint color)
 void
 main()
 {
-  uartinit();
-  uartputs("\nxv6 kernel is booting (C++, step 2)\n");
+  consoleinit();
+  printk("\n");
+  printk("xv6 kernel is booting (C++, step 3)\n");
+  printk("\n");
+  printbootinfo();
   paintscreen(0x00203060); // dark blue
 
   // "xv6" in white (the same in RGB and BGR pixel formats),
@@ -67,7 +104,7 @@ main()
   for (int i = 0; i < 3; i++)
     drawglyph(word[i], scale * 8 * (1 + i), scale * 8, scale, 0x00FFFFFF);
 
-  uartputs("nothing else yet; halting\n");
+  printk("nothing else yet; halting\n");
 
   for (;;)
     asm volatile("hlt");
