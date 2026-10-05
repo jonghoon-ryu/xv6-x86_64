@@ -27,10 +27,15 @@ consputc(int c)
 {
   if (c == BACKSPACE) {
     // if the user typed backspace, overwrite with a space.
+    // the screen first: a serial line may be slow, or blocked.
+    fbconsputc('\b');
+    fbconsputc(' ');
+    fbconsputc('\b');
     uartputc_sync('\b');
     uartputc_sync(' ');
     uartputc_sync('\b');
   } else {
+    fbconsputc(c);
     uartputc_sync(c);
   }
 }
@@ -39,4 +44,5 @@ void
 consoleinit()
 {
   uartinit();
+  fbconsinit();
 }

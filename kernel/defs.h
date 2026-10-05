@@ -29,3 +29,7 @@ char *strncpy(char *, const char *, int);
 void uartinit();
 void uartputc_sync(int);
 int uartgetc();
+
+// fbcons.cpp
+void fbconsinit();
+void fbconsputc(int);
