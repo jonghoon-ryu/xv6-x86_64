@@ -32,8 +32,28 @@ qemu-system-x86 ovmf). Then:
                        the serial console output goes to vbox/serial.log.
                        VBOXTYPE=headless for no window: the serial
                        console is then the unix socket vbox/serial.sock
-  esp.img              is a FAT boot partition image that a UEFI
-                       machine can boot
+  usb.img              a whole-disk image (GPT, one FAT32 EFI System
+                       Partition holding EFI/BOOT/BOOTX64.EFI, kernel,
+                       fs.img); make qemu and make vbox boot it too
+
+To boot a real PC (64-bit, UEFI):
+
+  1. make usb.img
+  2. find the USB stick's device with lsblk (say /dev/sdX), and
+     write the image; this erases the stick, so check the name:
+       sudo dd if=usb.img of=/dev/sdX bs=4M conv=fsync
+  3. in the PC's firmware setup, turn Secure Boot off (the loader
+     is not signed); CSM/legacy boot can stay on or off
+  4. boot from the stick with the one-time boot menu (often F8,
+     F11, F12, or Esc)
+
+The loader prints what it found, waits 3 seconds, and starts the
+kernel, which paints the screen blue and draws "xv6". Most PCs have
+no serial port, so the screen is the only output. If the loader
+stops with "memory for kernel is not free", it lists the firmware's
+memory map entries around the kernel's address (0x100000).
+If the screen turns dark red instead of blue, the frame buffer uses
+RGB order (pixel format 0); the kernel still ran.
 
 --- the original xv6-riscv README follows ---
 

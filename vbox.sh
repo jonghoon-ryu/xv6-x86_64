@@ -1,5 +1,5 @@
 #!/bin/sh
-# boot esp.img in a VirtualBox VM with UEFI firmware.
+# boot usb.img in a VirtualBox VM with UEFI firmware.
 # in a window (the default), type into the window; the serial port
 # (COM1) output also goes to vbox/serial.log.
 # headless (VBOXTYPE=headless), the serial port is the unix socket
@@ -29,7 +29,7 @@ else
   SERIAL="file $DIR/serial.log"
 fi
 
-VBoxManage convertfromraw esp.img "$DIR/esp.vdi" --format VDI >/dev/null
+VBoxManage convertfromraw usb.img "$DIR/esp.vdi" --format VDI >/dev/null
 VBoxManage createvm --name $VM --ostype Other_64 --basefolder "$DIR" --register >/dev/null
 VBoxManage modifyvm $VM --firmware efi --memory 512 --cpus $CPUS --ioapic on --vram 32 \
   --uart1 0x3F8 4 --uartmode1 $SERIAL

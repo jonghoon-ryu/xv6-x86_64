@@ -16,3 +16,4 @@ boot/*.o
 boot/*.EFI
 test-xv6.out
 vbox/
+usb.img

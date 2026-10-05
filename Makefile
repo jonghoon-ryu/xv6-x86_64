@@ -71,22 +71,32 @@ $B/BOOTX64.EFI: $B/loader.c $B/efi.h $K/bootinfo.h
 	lld-link -subsystem:efi_application -entry:efi_main -nodefaultlib \
 		-out:$@ $B/loader.o
 
-# a FAT boot partition holding the loader, the kernel, and fs.img.
-# it boots the same way under qemu, VirtualBox, and a real PC
-# (written to a USB stick).
+# a FAT32 boot partition (an EFI System Partition) holding the
+# loader, the kernel, and fs.img.
 esp.img: $B/BOOTX64.EFI $K/kernel fs.img
 	rm -f $@
 	dd if=/dev/zero of=$@ bs=1M count=64 status=none
-	mformat -i $@ ::
+	mformat -i $@ -F ::
 	mmd -i $@ ::/EFI ::/EFI/BOOT
 	mcopy -i $@ $B/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI
 	mcopy -i $@ $K/kernel ::/kernel
 	mcopy -i $@ fs.img ::/fs.img
 
+# a whole disk: a GPT partition table with esp.img as its EFI
+# System Partition. real PC firmware boots a USB stick only if it
+# looks like this; qemu and VirtualBox boot the same image.
+# write it to a USB stick with (CAREFUL: this erases /dev/sdX):
+#   sudo dd if=usb.img of=/dev/sdX bs=4M conv=fsync
+usb.img: esp.img
+	rm -f $@
+	dd if=/dev/zero of=$@ bs=1M count=66 status=none
+	sgdisk -o -n 1:2048:+64M -t 1:ef00 -c 1:"EFI System" $@ >/dev/null
+	dd if=esp.img of=$@ bs=1M seek=1 conv=notrunc status=none
+
 clean: 
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*/*.o */*.d */*.asm */*.sym \
-	$K/kernel fs.img esp.img ovmf_vars.fd $B/*.o $B/BOOTX64.EFI \
+	$K/kernel fs.img esp.img usb.img ovmf_vars.fd $B/*.o $B/BOOTX64.EFI \
 	.gdbinit
 
 # try to generate a unique GDB port
@@ -109,19 +119,19 @@ ovmf_vars.fd:
 QEMUOPTS = -machine q35 -m 512M -smp $(CPUS) -nographic -no-reboot
 QEMUOPTS += -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE)
 QEMUOPTS += -drive if=pflash,format=raw,file=ovmf_vars.fd
-QEMUOPTS += -drive format=raw,file=esp.img
+QEMUOPTS += -drive format=raw,file=usb.img
 
-qemu: esp.img ovmf_vars.fd
+qemu: usb.img ovmf_vars.fd
 	$(QEMU) $(QEMUOPTS)
 
 # boot the same image in a VirtualBox VM (see vbox.sh).
-vbox: esp.img
+vbox: usb.img
 	CPUS=$(CPUS) ./vbox.sh
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
 
-qemu-gdb: esp.img ovmf_vars.fd .gdbinit
+qemu-gdb: usb.img ovmf_vars.fd .gdbinit
 	@echo "*** Now run 'gdb' in another window." 1>&2
 	$(QEMU) $(QEMUOPTS) -S $(QEMUGDB)
 

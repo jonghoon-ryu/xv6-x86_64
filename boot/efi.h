@@ -37,6 +37,7 @@ typedef enum {
   AllocateAddress,
 } EFI_ALLOCATE_TYPE;
 
+#define EfiLoaderCode 1
 #define EfiLoaderData 2
 
 typedef struct {
@@ -87,7 +88,7 @@ typedef struct {
   void *UnloadImage;
   EFI_STATUS(EFIAPI *ExitBootServices)(EFI_HANDLE, UINTN);
   void *GetNextMonotonicCount;
-  void *Stall;
+  EFI_STATUS(EFIAPI *Stall)(UINTN); // microseconds
   EFI_STATUS(EFIAPI *SetWatchdogTimer)(UINTN, UINT64, UINTN, CHAR16 *);
   void *ConnectController;
   void *DisconnectController;

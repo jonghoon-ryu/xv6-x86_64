@@ -110,6 +110,19 @@ printhex(UINT64 x)
 }
 
 static void
+printdec(UINT64 x)
+{
+  CHAR16 buf[21];
+  int i = 20;
+  buf[i] = 0;
+  do {
+    buf[--i] = '0' + x % 10;
+    x /= 10;
+  } while (x != 0);
+  print(&buf[i]);
+}
+
+static void
 fail(CHAR16 *msg, EFI_STATUS status)
 {
   print(L"xv6 loader: ");
@@ -160,6 +173,33 @@ readfile(EFI_FILE *f, void *buf, UINT64 size)
     fail(L"read failed", s);
 }
 
+// print the firmware's memory map entries that overlap [lo, hi),
+// to see who owns the memory the kernel needs.
+static void
+showmemmap(UINT64 lo, UINT64 hi)
+{
+  static UINT8 map[16 * PGSIZE];
+  UINTN mapsize = sizeof(map), mapkey, descsize;
+  UINT32 descversion;
+  if (EFI_ERROR(BS->GetMemoryMap(&mapsize, (EFI_MEMORY_DESCRIPTOR *)map,
+                                 &mapkey, &descsize, &descversion)))
+    return;
+  print(L"  memory map near the kernel (type 7 = free):\r\n");
+  for (UINTN off = 0; off < mapsize; off += descsize) {
+    EFI_MEMORY_DESCRIPTOR *d = (EFI_MEMORY_DESCRIPTOR *)(map + off);
+    UINT64 end = d->PhysicalStart + d->NumberOfPages * PGSIZE;
+    if (end <= lo || d->PhysicalStart >= hi)
+      continue;
+    print(L"    ");
+    printhex(d->PhysicalStart);
+    print(L" - ");
+    printhex(end);
+    print(L" type ");
+    printdec(d->Type);
+    print(L"\r\n");
+  }
+}
+
 // copy the kernel's segments to the physical addresses it was
 // linked for, and return its entry point.
 static UINT64
@@ -190,11 +230,22 @@ loadkernel(EFI_FILE *root)
       hi = ph[i].paddr + ph[i].memsz;
   }
   lo &= ~(PGSIZE - 1);
+  print(L"  kernel: ");
+  printhex(lo);
+  print(L" - ");
+  printhex(hi);
+  print(L"\r\n");
+
+  // EfiLoaderCode, not EfiLoaderData: newer PC firmware can map
+  // data pages no-execute, and the kernel runs on the firmware's
+  // page tables until it makes its own.
   UINT64 addr = lo;
-  s = BS->AllocatePages(AllocateAddress, EfiLoaderData,
+  s = BS->AllocatePages(AllocateAddress, EfiLoaderCode,
                         (hi - lo + PGSIZE - 1) / PGSIZE, &addr);
-  if (EFI_ERROR(s))
+  if (EFI_ERROR(s)) {
+    showmemmap(lo, hi);
     fail(L"memory for kernel is not free", s);
+  }
 
   for (int i = 0; i < elf->phnum; i++) {
     if (ph[i].type != ELF_PROG_LOAD)
@@ -244,8 +295,14 @@ efi_main(EFI_HANDLE imagehandle, EFI_SYSTEM_TABLE *systab)
   readfile(f, (void *)bi->fsimg, size);
   f->Close(f);
 
-  // a page below 1MB, where other CPUs start in 16-bit mode.
-  bi->apboot = lowpages(1, 0xA0000);
+  // a page below 640KB, where other CPUs start in 16-bit mode.
+  // real PCs may have none free; the kernel then uses one CPU.
+  UINT64 apboot = 0xA0000 - 1;
+  if (!EFI_ERROR(BS->AllocatePages(AllocateMaxAddress, EfiLoaderData, 1,
+                                   &apboot)))
+    bi->apboot = apboot;
+  else
+    print(L"  no free page below 640KB: other CPUs cannot start\r\n");
 
   // the ACPI tables describe the CPUs and interrupt controllers.
   EFI_GUID acpi20 = ACPI_20_TABLE_GUID, acpi10 = ACPI_10_TABLE_GUID;
@@ -269,7 +326,24 @@ efi_main(EFI_HANDLE imagehandle, EFI_SYSTEM_TABLE *systab)
     bi->fb_width = gop->Mode->Info->HorizontalResolution;
     bi->fb_height = gop->Mode->Info->VerticalResolution;
     bi->fb_stride = gop->Mode->Info->PixelsPerScanLine;
+    print(L"  screen: ");
+    printdec(bi->fb_width);
+    print(L"x");
+    printdec(bi->fb_height);
+    print(L", frame buffer at ");
+    printhex(bi->fb_base);
+    // 0: RGB, 1: BGR, 2: bit mask, 3: no frame buffer (BLT only)
+    print(L", pixel format ");
+    printdec(gop->Mode->Info->PixelFormat);
+    print(L"\r\n");
+    if (gop->Mode->Info->PixelFormat > 2)
+      bi->fb_base = 0;
+  } else {
+    print(L"  no frame buffer: the kernel can only use the serial port\r\n");
   }
+  print(L"  ACPI: ");
+  printhex(bi->rsdp);
+  print(L"\r\n");
 
   // get the memory map, and leave boot services. the map must be
   // current, so allocate the buffer first; ExitBootServices fails
@@ -277,6 +351,11 @@ efi_main(EFI_HANDLE imagehandle, EFI_SYSTEM_TABLE *systab)
   UINTN mapbytes = 16 * PGSIZE;
   bi->memmap = lowpages(mapbytes / PGSIZE, PHYSTOP);
   print(L"starting kernel\r\n");
+
+  // the kernel draws over the screen at once; on a real PC, with
+  // no serial port, this is the only time to read the lines above.
+  BS->Stall(3 * 1000 * 1000);
+
   for (int tries = 0;; tries++) {
     UINTN mapsize = mapbytes, mapkey, descsize;
     UINT32 descversion;
