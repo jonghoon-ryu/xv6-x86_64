@@ -9,8 +9,10 @@ extern struct bootinfo bootinfo;
 
 // the boot skeleton, growing one conversion step at a time.
 // step 4: printk() output goes to both the serial port and the
-// screen (fbcons.cpp), as in the C version. the hand-drawn "xv6"
-// letters of steps 1-3 are gone.
+// screen (fbcons.cpp), as in the C version.
+// step 5: typing. with no interrupts yet, main() polls the
+// keyboard and the serial port by calling their interrupt
+// handlers, kbdintr() and uartintr(), in a loop.
 
 // UEFI memory types (the UEFI spec's EFI_MEMORY_TYPE), for the
 // memory map summary below.
@@ -59,11 +61,22 @@ main()
 {
   consoleinit();
   printk("\n");
-  printk("xv6 kernel is booting (C++, step 4)\n");
+  printk("xv6 kernel is booting (C++, step 5)\n");
   printk("\n");
   printbootinfo();
-  printk("nothing else yet; halting\n");
+  kbdinit(); // PS/2 keyboard
 
-  for (;;)
-    asm volatile("hlt");
+  printk("\ntype on the keyboard (or the serial console): ");
+
+  // [platform: QEMU, VirtualBox] keys come from the PS/2 keyboard
+  // (the window) and from the serial port (make qemu's terminal).
+  // [platform: real PC] only a PS/2 keyboard, or a USB keyboard
+  // that the firmware still emulates as PS/2; see kbd.cpp.
+  // unlike hlt, this loop keeps the CPU 100% busy; interrupts
+  // (later steps) will let it sleep until a key arrives.
+  for (;;) {
+    kbdintr();
+    uartintr();
+    asm volatile("pause"); // a hint to the CPU that this is a spin loop
+  }
 }

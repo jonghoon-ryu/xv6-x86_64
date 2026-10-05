@@ -5,6 +5,7 @@
 
 // console.cpp
 void consoleinit();
+void consoleintr(int);
 void consputc(int);
 
 // printk.cpp
@@ -27,9 +28,13 @@ char *strncpy(char *, const char *, int);
 
 // uart.cpp
 void uartinit();
+void uartintr();
 void uartputc_sync(int);
-int uartgetc();
 
 // fbcons.cpp
 void fbconsinit();
 void fbconsputc(int);
+
+// kbd.cpp
+void kbdinit();
+void kbdintr();

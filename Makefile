@@ -9,6 +9,7 @@ OBJS = \
   $K/main.o \
   $K/console.o \
   $K/fbcons.o \
+  $K/kbd.o \
   $K/printk.o \
   $K/string.o \
   $K/uart.o

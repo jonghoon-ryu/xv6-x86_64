@@ -1,9 +1,11 @@
 //
 // low-level driver for 16550a UART.
 //
-// so far only the polling half of uart.c: uartinit(),
-// uartputc_sync() and uartgetc(). uartwrite() and uartintr(),
-// which need sleep() and interrupts, come back with them.
+// so far: uartinit(), uartputc_sync(), uartgetc(), and uartintr()
+// without its wakeup of a sending thread. uartwrite(), which
+// needs sleep(), comes back with processes.
+// step 5: nothing handles interrupts yet, so main() calls
+// uartintr() over and over (polling).
 //
 // [platform: QEMU, VirtualBox] both emulate a 16550 at COM1. make
 // qemu connects it to the terminal; make vbox to vbox/serial.log.
@@ -27,6 +29,7 @@ constexpr ushort RHR = 0;                  // receive holding register (for inpu
 constexpr ushort THR = 0;                  // transmit holding register (for output bytes)
 constexpr ushort IER = 1;                  // interrupt enable register
 constexpr ushort FCR = 2;                  // FIFO control register
+constexpr ushort ISR = 2;                  // interrupt status register
 constexpr uchar FCR_FIFO_ENABLE = 1 << 0;
 constexpr uchar FCR_FIFO_CLEAR = 3 << 1;   // clear the content of the two FIFOs
 constexpr ushort LCR = 3;                  // line control register
@@ -89,9 +92,8 @@ uartputc_sync(int c)
 
 // try to read one input character from the UART.
 // return -1 if none is waiting.
-// (static in uart.c, where only uartintr() calls it; until
-// interrupts come back, main() polls it.)
-int
+// (public in steps 2-4, before uartintr() existed.)
+static int
 uartgetc()
 {
   uchar lsr = ReadReg(LSR);
@@ -101,4 +103,25 @@ uartgetc()
   if (lsr & LSR_RX_READY)
     return ReadReg(RHR);
   return -1;
+}
+
+// handle a uart interrupt, raised because input has
+// arrived, or the uart is ready for more output, or
+// both. called from devintr() in the C version; for now
+// main() calls it in a loop.
+void
+uartintr()
+{
+  ReadReg(ISR); // acknowledge the interrupt
+
+  // the C version wakes up a thread in uartwrite() here when the
+  // UART is ready for more output. no uartwrite() yet.
+
+  // read and process incoming characters, if any.
+  while (1) {
+    int c = uartgetc();
+    if (c == -1)
+      break;
+    consoleintr(c);
+  }
 }
