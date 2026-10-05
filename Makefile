@@ -82,9 +82,10 @@ esp.img: $B/BOOTX64.EFI $K/kernel fs.img
 	mcopy -i $@ $K/kernel ::/kernel
 	mcopy -i $@ fs.img ::/fs.img
 
-# a whole disk: a GPT partition table with esp.img as its EFI
-# System Partition. real PC firmware boots a USB stick only if it
-# looks like this; qemu and VirtualBox boot the same image.
+# [platform: real PC] a whole disk: a GPT partition table with
+# esp.img as its EFI System Partition. real PC firmware boots a USB
+# stick only if it looks like this; qemu and VirtualBox boot the
+# same image.
 # write it to a USB stick with (CAREFUL: this erases /dev/sdX):
 #   sudo dd if=usb.img of=/dev/sdX bs=4M conv=fsync
 usb.img: esp.img
@@ -121,10 +122,11 @@ QEMUOPTS += -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE)
 QEMUOPTS += -drive if=pflash,format=raw,file=ovmf_vars.fd
 QEMUOPTS += -drive format=raw,file=usb.img
 
+# [platform: QEMU]
 qemu: usb.img ovmf_vars.fd
 	$(QEMU) $(QEMUOPTS)
 
-# boot the same image in a VirtualBox VM (see vbox.sh).
+# [platform: VirtualBox] boot the same image in a VirtualBox VM (see vbox.sh).
 vbox: usb.img
 	CPUS=$(CPUS) ./vbox.sh
 

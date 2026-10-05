@@ -1,5 +1,5 @@
 #!/bin/sh
-# boot usb.img in a VirtualBox VM with UEFI firmware.
+# [platform: VirtualBox] boot usb.img in a VirtualBox VM with UEFI firmware.
 # in a window (the default), type into the window; the serial port
 # (COM1) output also goes to vbox/serial.log.
 # headless (VBOXTYPE=headless), the serial port is the unix socket

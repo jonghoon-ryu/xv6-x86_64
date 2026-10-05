@@ -11,6 +11,11 @@ extern struct bootinfo bootinfo;
 // back, in C++, as the first conversion step; until then main()
 // talks to the serial port directly and paints the screen.
 
+// [platform: QEMU, VirtualBox] both emulate a 16550 serial port at
+// COM1; make qemu shows it in the terminal, make vbox writes it to
+// vbox/serial.log. [platform: real PC] most PCs have no COM1: the
+// status register then reads 0xFF, which looks "ready", so output
+// just disappears instead of hanging.
 // the 16550 UART registers used here; see uart.c in the C port.
 constexpr int THR = 0;              // transmit holding register
 constexpr int IER = 1;              // interrupt enable register

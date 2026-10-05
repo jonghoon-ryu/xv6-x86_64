@@ -10,6 +10,10 @@
 // it plays the part of qemu's -kernel option for RISC-V xv6, and
 // of bootasm.S/bootmain.c in the old x86 xv6.
 //
+// the same loader runs under QEMU (OVMF firmware), VirtualBox (its
+// EFI firmware), and on a real PC. comments marked [platform: ...]
+// explain code that is there because of one of them.
+//
 
 #include "efi.h"
 #include "../kernel/bootinfo.h"
@@ -236,7 +240,7 @@ loadkernel(EFI_FILE *root)
   printhex(hi);
   print(L"\r\n");
 
-  // EfiLoaderCode, not EfiLoaderData: newer PC firmware can map
+  // [platform: real PC] EfiLoaderCode, not EfiLoaderData: newer PC firmware can map
   // data pages no-execute, and the kernel runs on the firmware's
   // page tables until it makes its own.
   UINT64 addr = lo;
@@ -296,7 +300,8 @@ efi_main(EFI_HANDLE imagehandle, EFI_SYSTEM_TABLE *systab)
   f->Close(f);
 
   // a page below 640KB, where other CPUs start in 16-bit mode.
-  // real PCs may have none free; the kernel then uses one CPU.
+  // [platform: real PC] real PCs may have none free; the kernel
+  // then uses one CPU. QEMU and VirtualBox always have one.
   UINT64 apboot = 0xA0000 - 1;
   if (!EFI_ERROR(BS->AllocatePages(AllocateMaxAddress, EfiLoaderData, 1,
                                    &apboot)))
@@ -336,6 +341,8 @@ efi_main(EFI_HANDLE imagehandle, EFI_SYSTEM_TABLE *systab)
     print(L", pixel format ");
     printdec(gop->Mode->Info->PixelFormat);
     print(L"\r\n");
+    // [platform: real PC] some graphics cards offer only BLT
+    // (copy) operations and no frame buffer the kernel can write.
     if (gop->Mode->Info->PixelFormat > 2)
       bi->fb_base = 0;
   } else {
@@ -352,8 +359,10 @@ efi_main(EFI_HANDLE imagehandle, EFI_SYSTEM_TABLE *systab)
   bi->memmap = lowpages(mapbytes / PGSIZE, PHYSTOP);
   print(L"starting kernel\r\n");
 
-  // the kernel draws over the screen at once; on a real PC, with
-  // no serial port, this is the only time to read the lines above.
+  // [platform: real PC] the kernel draws over the screen at once;
+  // on a real PC, with no serial port, this is the only time to
+  // read the lines above. (QEMU and VirtualBox also copy them to
+  // the serial port.)
   BS->Stall(3 * 1000 * 1000);
 
   for (int tries = 0;; tries++) {
