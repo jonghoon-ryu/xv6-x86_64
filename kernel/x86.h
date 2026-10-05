@@ -171,14 +171,14 @@ struct dtr {
 static inline void
 lidt(void *base, int size)
 {
-  struct dtr d = { size - 1, (uint64)base };
+  struct dtr d = { (ushort)(size - 1), (uint64)base };
   asm volatile("lidt %0" : : "m"(d));
 }
 
 static inline void
 lgdt(void *base, int size)
 {
-  struct dtr d = { size - 1, (uint64)base };
+  struct dtr d = { (ushort)(size - 1), (uint64)base };
   asm volatile("lgdt %0" : : "m"(d));
 }
 

@@ -6,12 +6,12 @@
 .global _entry
 _entry:
         cli
-        # set up a stack for C.
-        # stack0 is declared in start.c,
+        # set up a stack for C++.
+        # stack0 is declared in start.cpp,
         # with a 4096-byte stack per CPU.
         # %rsp = stack0 + 4096, for CPU 0
         leaq stack0+4096(%rip), %rsp
-        # jump to start() in start.c; %rdi still holds bootinfo.
+        # jump to start() in start.cpp; %rdi still holds bootinfo.
         call start
 spin:
         hlt

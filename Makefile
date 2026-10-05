@@ -1,47 +1,20 @@
 K=kernel
-U=user
 B=boot
 
+# the boot skeleton. each conversion step adds the C++ version
+# of one part of the C port (tag v0.1-x86_64-c) here.
 OBJS = \
   $K/entry.o \
   $K/start.o \
-  $K/console.o \
-  $K/printk.o \
-  $K/uart.o \
-  $K/kalloc.o \
-  $K/spinlock.o \
-  $K/string.o \
-  $K/main.o \
-  $K/vm.o \
-  $K/proc.o \
-  $K/swtch.o \
-  $K/trampoline.o \
-  $K/trap.o \
-  $K/syscall.o \
-  $K/sysproc.o \
-  $K/bio.o \
-  $K/fs.o \
-  $K/log.o \
-  $K/sleeplock.o \
-  $K/file.o \
-  $K/pipe.o \
-  $K/exec.o \
-  $K/sysfile.o \
-  $K/kernelvec.o \
-  $K/acpi.o \
-  $K/lapic.o \
-  $K/ioapic.o \
-  $K/ramdisk.o \
-  $K/entryother.o \
-  $K/fbcons.o \
-  $K/kbd.o
+  $K/main.o
 
-# the kernel and user programs are built with the host's
-# x86-64 gcc and binutils; the UEFI loader with clang and lld,
-# which can produce the PE/COFF files that UEFI runs.
+# the kernel is built with the host's x86-64 g++ and binutils;
+# the UEFI loader with clang and lld, which can produce the
+# PE/COFF files that UEFI runs.
 QEMU = qemu-system-x86_64
 
 CC = gcc
+CXX = g++
 LD = ld
 OBJCOPY = objcopy
 OBJDUMP = objdump
@@ -49,90 +22,46 @@ OBJDUMP = objdump
 # Deterministic builds.
 DETFLAGS = -ffile-prefix-map=$(CURDIR)=.
 
-CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2
-CFLAGS += $(DETFLAGS)
-CFLAGS += -m64 -mno-red-zone -mgeneral-regs-only
-CFLAGS += -std=gnu99
-CFLAGS += -MD
-CFLAGS += -ffreestanding
-CFLAGS += -fno-common -nostdlib
-CFLAGS += -fno-builtin-strncpy -fno-builtin-strncmp -fno-builtin-strlen -fno-builtin-memset
-CFLAGS += -fno-builtin-memmove -fno-builtin-memcmp -fno-builtin-log -fno-builtin-bzero
-CFLAGS += -fno-builtin-strchr -fno-builtin-exit -fno-builtin-malloc -fno-builtin-putc
-CFLAGS += -fno-builtin-free
-CFLAGS += -fno-builtin-memcpy -Wno-main
-CFLAGS += -fno-builtin-printf -fno-builtin-fprintf -fno-builtin-vprintf
-CFLAGS += -fno-stack-protector -fno-pie -fno-pic -no-pie
-CFLAGS += -fno-asynchronous-unwind-tables -fcf-protection=none
-CFLAGS += -I.
+# flags shared by C++ and assembly.
+COMMONFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb -gdwarf-2
+COMMONFLAGS += $(DETFLAGS)
+COMMONFLAGS += -m64 -mno-red-zone -mgeneral-regs-only
+COMMONFLAGS += -MD
+COMMONFLAGS += -ffreestanding -fno-builtin
+COMMONFLAGS += -fno-common -nostdlib
+COMMONFLAGS += -fno-stack-protector -fno-pie -fno-pic -no-pie
+COMMONFLAGS += -fno-asynchronous-unwind-tables -fcf-protection=none
+COMMONFLAGS += -I.
+
+ASFLAGS = $(COMMONFLAGS)
+
+# freestanding C++20: no exceptions, RTTI, or standard library,
+# and nothing that needs a C++ runtime (thread-safe statics,
+# atexit-registered destructors).
+CXXFLAGS = $(COMMONFLAGS) -std=c++20
+CXXFLAGS += -fno-exceptions -fno-rtti
+CXXFLAGS += -fno-threadsafe-statics -fno-use-cxa-atexit
+CXXFLAGS += -Wno-main
 
 LDFLAGS = -m elf_x86_64 -z max-page-size=4096 -z noexecstack --no-warn-rwx-segments
 
 $K/kernel: $(OBJS) $K/kernel.ld
-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
+	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS)
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
 
 $K/%.o: $K/%.S
-	$(CC) $(CFLAGS) -c -o $@ $<
+	$(CC) $(ASFLAGS) -c -o $@ $<
 
-tags: $(OBJS)
-	etags kernel/*.S kernel/*.c
+$K/%.o: $K/%.cpp
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
 
-ULIB = $U/ulib.o $U/usys.o $U/printf.o $U/umalloc.o
+# the loader always loads fs.img. until the file system comes
+# back (with mkfs), give it one empty block.
+fs.img:
+	dd if=/dev/zero of=$@ bs=1024 count=1 status=none
 
-_%: %.o $(ULIB) $U/user.ld
-	$(LD) $(LDFLAGS) -T $U/user.ld -o $@ $< $(ULIB)
-	$(OBJDUMP) -S $@ > $*.asm
-	$(OBJDUMP) -t $@ | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $*.sym
-
-$U/usys.S : $U/usys.pl
-	perl $U/usys.pl > $U/usys.S
-
-$U/usys.o : $U/usys.S
-	$(CC) $(CFLAGS) -c -o $U/usys.o $U/usys.S
-
-$U/_forktest: $U/forktest.o $(ULIB)
-	# forktest has less library code linked in - needs to be small
-	# in order to be able to max out the proc table.
-	$(LD) $(LDFLAGS) -N -e start -Ttext 0 -o $U/_forktest $U/forktest.o $U/ulib.o $U/usys.o
-	$(OBJDUMP) -S $U/_forktest > $U/forktest.asm
-
-mkfs/mkfs: mkfs/mkfs.c $K/fs.h $K/param.h
-	gcc -Wno-unknown-attributes -I. -o mkfs/mkfs mkfs/mkfs.c
-
-# Prevent deletion of intermediate files, e.g. cat.o, after first build, so
-# that disk image changes after first build are persistent until clean.  More
-# details:
-# http://www.gnu.org/software/make/manual/html_node/Chained-Rules.html
-.PRECIOUS: %.o
-
-UPROGS=\
-	$U/_cat\
-	$U/_echo\
-	$U/_forktest\
-	$U/_grep\
-	$U/_init\
-	$U/_kill\
-	$U/_ln\
-	$U/_ls\
-	$U/_mkdir\
-	$U/_rm\
-	$U/_sh\
-	$U/_stressfs\
-	$U/_usertests\
-	$U/_grind\
-	$U/_wc\
-	$U/_zombie\
-	$U/_logstress\
-	$U/_forphan\
-	$U/_dorphan\
-	$U/_sync\
-
-fs.img: mkfs/mkfs README $(UPROGS)
-	mkfs/mkfs fs.img README $(UPROGS)
-
--include kernel/*.d user/*.d
+-include kernel/*.d
 
 # the UEFI loader, EFI/BOOT/BOOTX64.EFI on the boot partition.
 $B/BOOTX64.EFI: $B/loader.c $B/efi.h $K/bootinfo.h
@@ -158,9 +87,7 @@ clean:
 	rm -f *.tex *.dvi *.idx *.aux *.log *.ind *.ilg \
 	*/*.o */*.d */*.asm */*.sym \
 	$K/kernel fs.img esp.img ovmf_vars.fd $B/*.o $B/BOOTX64.EFI \
-	mkfs/mkfs .gdbinit \
-        $U/usys.S \
-	$(UPROGS)
+	.gdbinit
 
 # try to generate a unique GDB port
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
@@ -203,4 +130,4 @@ print-gdbport:
 
 .PHONY: fmt
 fmt:
-	clang-format -i $(wildcard kernel/*.[ch] user/*.[ch] mkfs/*.c)
+	clang-format -i $(wildcard kernel/*.[ch] kernel/*.cpp)

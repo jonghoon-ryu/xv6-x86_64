@@ -13,16 +13,21 @@ SECTIONS
     kernel/entry.o(.text)
     *(.text .text.*)
     . = ALIGN(0x1000);
-    _trampoline = .;
-    *(trampsec)
-    . = ALIGN(0x1000);
-    ASSERT(. - _trampoline == 0x1000, "error: trampoline larger than one page");
     PROVIDE(etext = .);
   }
 
   .rodata : {
     . = ALIGN(16);
     *(.rodata .rodata.*)
+  }
+
+  /* constructors of C++ global objects; start() runs them. */
+  .init_array : {
+    . = ALIGN(8);
+    PROVIDE(__init_array_start = .);
+    KEEP(*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+    KEEP(*(.init_array))
+    PROVIDE(__init_array_end = .);
   }
 
   .data : {

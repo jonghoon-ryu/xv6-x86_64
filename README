@@ -1,32 +1,34 @@
-xv6-x86_64: xv6-riscv ported to x86-64 PCs.
+xv6-x86_64, branch cpp: xv6 rebuilt in C++, one part at a time.
 
-This is MIT's xv6-riscv (https://github.com/mit-pdos/xv6-riscv) with
-its machine-dependent parts rewritten for 64-bit x86 PCs that boot
-with UEFI. The machine-independent parts (file system, log, pipes,
-processes, user programs) are unchanged, so the xv6 book still
-describes them; for the machine-dependent parts, the comments in the
-x86-64 files name their RISC-V counterparts.
+The main branch (tag v0.1-x86_64-c) is MIT's xv6-riscv
+(https://github.com/mit-pdos/xv6-riscv) ported to 64-bit x86 PCs
+that boot with UEFI, in C. This branch starts over from a boot
+skeleton and brings the parts of that port back one at a time,
+converted to freestanding C++20 (no exceptions, RTTI, or standard
+library), keeping xv6's file and function names so the code can be
+read alongside the xv6 book.
 
-  RISC-V                         x86-64
-  qemu -kernel, entry.S, start.c boot/loader.c (UEFI), entry.S, start.c
-  Sv39 (3 levels), satp          4-level page tables, cr3
-  stvec, kernelvec.S             IDT, kernelvec.S
-  ecall, trampoline.S            int $64, trampoline.S (+ GDT/TSS in CPUTABLES)
-  tp (hartid)                    GS base MSR
-  PLIC, stimecmp                 IOAPIC, local APIC timer (found via ACPI)
-  harts start together           entryother.S wakes the other CPUs
-  memory-mapped UART             16550 UART at I/O port 0x3F8 (COM1)
-  virtio disk                    RAM disk (fs.img, loaded by the UEFI loader)
-  (UART console only)            also a screen console (fbcons.c) and
-                                 PS/2 keyboard (kbd.c)
+The skeleton is:
 
-To build and run, you need gcc and binutils for x86-64, clang and
+  boot/loader.c        the UEFI loader (unchanged from main)
+  kernel/entry.S       sets up a stack and calls start()
+  kernel/start.cpp     copies the loader's bootinfo, runs global
+                       constructors, calls main()
+  kernel/main.cpp      prints a line on the serial port, paints
+                       the screen, and halts
+  kernel/kernel.ld     links the kernel at 0x100000
+
+and the headers bootinfo.h, types.h, param.h, memlayout.h, x86.h.
+There is no file system yet, so fs.img is an empty placeholder
+that keeps the loader happy.
+
+To build and run, you need g++ and binutils for x86-64, clang and
 lld (for the UEFI loader), mtools, qemu-system-x86_64, and the OVMF
 UEFI firmware (Ubuntu packages: build-essential clang lld mtools
 qemu-system-x86 ovmf). Then:
 
   make qemu            boot in qemu (CPUS=n for n CPUs)
-  make vbox            boot in a VirtualBox window and type into it;
+  make vbox            boot in a VirtualBox window;
                        the serial console output goes to vbox/serial.log.
                        VBOXTYPE=headless for no window: the serial
                        console is then the unix socket vbox/serial.sock
