@@ -13,6 +13,8 @@ extern struct bootinfo bootinfo;
 // step 5: typing. with no interrupts yet, main() polls the
 // keyboard and the serial port by calling their interrupt
 // handlers, kbdintr() and uartintr(), in a loop.
+// step 6: CPU exceptions are shown on the screen (earlytrap.cpp),
+// not a silent reboot; the PCI bus is read (pci.cpp).
 
 // UEFI memory types (the UEFI spec's EFI_MEMORY_TYPE), for the
 // memory map summary below.
@@ -55,16 +57,54 @@ printbootinfo()
              pages[t] * 4096 / (1024 * 1024));
 }
 
+// step 6 only: list some kinds of PCI devices, like Linux's lspci.
+static int npci;
+
+static void
+pcishow(int bus, int dev, int func)
+{
+  uint32 id = pciread(bus, dev, func, 0x00);
+  uint32 cls = pciread(bus, dev, func, 0x08) >> 8;
+  printk("  %d:%d.%d  vendor %x device %x  class %x\n", bus, dev, func,
+         id & 0xFFFF, id >> 16, cls);
+  npci++;
+}
+
+static void
+pcilist()
+{
+  static const struct {
+    uint32 cls; // class, subclass, programming interface
+    const char *name;
+  } kinds[] = {
+    { 0x030000, "display (VGA)" },
+    { 0x010601, "SATA disk controller (AHCI)" },
+    { 0x010802, "NVMe disk" },
+    { 0x020000, "Ethernet" },
+    { 0x0C0320, "USB 2 controller (EHCI)" },
+    { 0x0C0330, "USB 3 controller (xHCI)" },
+  };
+  for (auto &k : kinds) {
+    printk("PCI %s:\n", k.name);
+    npci = 0;
+    pciscan(k.cls, pcishow);
+    if (npci == 0)
+      printk("  none\n");
+  }
+}
+
 // start() jumps here on the first CPU.
 void
 main()
 {
   consoleinit();
+  earlytrapinit(); // [platform: real PC] show CPU exceptions, not a reboot
   printk("\n");
-  printk("xv6 kernel is booting (C++, step 5)\n");
+  printk("xv6 kernel is booting (C++, step 6)\n");
   printk("\n");
   printbootinfo();
   kbdinit(); // PS/2 keyboard
+  pcilist(); // step 6 only
 
   printk("\ntype on the keyboard (or the serial console): ");
 

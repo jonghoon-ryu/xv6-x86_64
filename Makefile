@@ -8,8 +8,11 @@ OBJS = \
   $K/start.o \
   $K/main.o \
   $K/console.o \
+  $K/earlytrap.o \
+  $K/earlyvec.o \
   $K/fbcons.o \
   $K/kbd.o \
+  $K/pci.o \
   $K/printk.o \
   $K/string.o \
   $K/uart.o
@@ -127,6 +130,14 @@ QEMUOPTS = -machine q35 -m 512M -smp $(CPUS) -nographic -no-reboot
 QEMUOPTS += -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE)
 QEMUOPTS += -drive if=pflash,format=raw,file=ovmf_vars.fd
 QEMUOPTS += -drive format=raw,file=usb.img
+
+# [platform: QEMU] make qemu USB=1 adds a USB controller (xHCI)
+# with a USB keyboard. (QEMU's PS/2 keyboard is still there too:
+# add i8042=off to -machine to type through USB only.)
+ifeq ($(USB),1)
+QEMUOPTS += -device qemu-xhci,id=xhci
+QEMUOPTS += -device usb-kbd,bus=xhci.0
+endif
 
 # [platform: QEMU]
 qemu: usb.img ovmf_vars.fd

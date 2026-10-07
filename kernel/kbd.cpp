@@ -8,8 +8,9 @@
 // [platform: real PC] works with a PS/2 keyboard, or with a USB
 // keyboard if the firmware's "legacy USB support" keeps emulating
 // PS/2 after the kernel starts (many do not, especially with CSM
-// off). with no controller at all, every port reads 0xFF; see
-// kbdgetc().
+// off); steps 7-10 add a USB driver for those. with no controller at all, the
+// ports read 0xFF on most PCs, but other junk on some (0x55 on
+// one test PC); see kbdgetc() and kbdintr().
 //
 // step 5: nothing handles interrupts yet, so main() calls
 // kbdintr() over and over (polling) instead of the interrupt
@@ -124,7 +125,11 @@ void
 kbdintr()
 {
   int c;
-  while ((c = kbdgetc()) >= 0) {
+  // [platform: real PC] at most 16 bytes per call: with no
+  // controller, the status port may read as "a byte is waiting"
+  // forever, and this loop must not starve the other devices.
+  // (the C version loops until kbdgetc() says no more.)
+  for (int n = 0; n < 16 && (c = kbdgetc()) >= 0; n++) {
     // skip keys without characters, and arrow keys etc.,
     // which the console does not understand.
     if (c != 0 && c < 0x80)

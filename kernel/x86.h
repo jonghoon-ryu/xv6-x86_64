@@ -162,6 +162,21 @@ outb(ushort port, uchar data)
   asm volatile("outb %0, %1" : : "a"(data), "d"(port));
 }
 
+// 32-bit port I/O, for PCI configuration space (pci.cpp).
+static inline uint32
+inl(ushort port)
+{
+  uint32 data;
+  asm volatile("inl %1, %0" : "=a"(data) : "d"(port));
+  return data;
+}
+
+static inline void
+outl(ushort port, uint32 data)
+{
+  asm volatile("outl %0, %1" : : "a"(data), "d"(port));
+}
+
 // the pseudo-descriptor used by lgdt and lidt.
 struct dtr {
   ushort limit;

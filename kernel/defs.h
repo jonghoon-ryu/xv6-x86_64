@@ -38,3 +38,11 @@ void fbconsputc(int);
 // kbd.cpp
 void kbdinit();
 void kbdintr();
+
+// earlytrap.cpp
+void earlytrapinit();
+
+// pci.cpp
+uint32 pciread(int, int, int, int);
+void pciwrite(int, int, int, int, uint32);
+void pciscan(uint32, void (*)(int, int, int));
