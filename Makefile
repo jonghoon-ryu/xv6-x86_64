@@ -16,6 +16,7 @@ OBJS = \
   $K/printk.o \
   $K/string.o \
   $K/uart.o \
+  $K/usb.o \
   $K/xhci.o
 
 # the kernel is built with the host's x86-64 g++ and binutils;

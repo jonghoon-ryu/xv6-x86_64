@@ -1,5 +1,6 @@
 // the USB 3 host controller (xHCI) and the USB devices behind it.
-// xhci.cpp drives the controller; the devices come in step 8.
+// xhci.cpp drives the controller; usb.cpp sets up the devices
+// (hubs and keyboards) and turns key reports into characters.
 //
 // not in the C version, which has no USB. the names follow the
 // xHCI specification (revision 1.2), so that the code can be
@@ -16,13 +17,24 @@ struct Trb {
 };
 
 // TRB types (xHCI 6.4.6).
+constexpr uint32 TRB_SETUP = 2;
+constexpr uint32 TRB_DATA = 3;
+constexpr uint32 TRB_STATUS = 4;
 constexpr uint32 TRB_LINK = 6;
-constexpr uint32 TRB_NOOP_COMMAND = 23;
+constexpr uint32 TRB_ENABLE_SLOT = 9;
+constexpr uint32 TRB_DISABLE_SLOT = 10;
+constexpr uint32 TRB_ADDRESS_DEVICE = 11;
+constexpr uint32 TRB_EVALUATE_CONTEXT = 13;
+constexpr uint32 TRB_RESET_EP = 14;
+constexpr uint32 TRB_SET_TR_DEQUEUE = 16;
+constexpr uint32 TRB_TRANSFER_EVENT = 32;
 constexpr uint32 TRB_COMMAND_COMPLETION = 33;
 constexpr uint32 TRB_PORT_STATUS_CHANGE = 34;
 
 // completion codes (xHCI 6.4.5).
 constexpr int CC_SUCCESS = 1;
+constexpr int CC_STALL = 6;
+constexpr int CC_SHORT_PACKET = 13;
 
 // port speeds, as in PORTSC and the slot context (xHCI 7.2.2.1.1).
 constexpr int SPEED_FULL = 1;  // USB 1.1, 12 Mb/s
@@ -43,6 +55,30 @@ struct Ring {
 
   void init();
   Trb *push(uint64 param, uint32 status, uint32 control);
+  // where the controller should continue, for Set TR Dequeue Pointer.
+  uint64 dequeue() const { return (uint64)&trb[idx] | cycle; }
+};
+
+class Xhci;
+
+// one USB device: a keyboard, a hub, or something xv6 ignores.
+struct UsbDev {
+  Xhci *hc;
+  int slot;        // the controller's number for this device
+  int speed;       // SPEED_*
+  int rootport;    // the controller's port the device is behind (from 1)
+  uint32 route;    // the hub ports on the way there (xHCI 8.9)
+  int depth;       // how many hubs are on the way
+  int ttslot;      // a low/full speed device behind a high speed hub:
+  int ttport;      //   that hub's slot and port (its Transaction Translator)
+  int mps0;        // endpoint 0's maximum packet size
+  Ring ep0;        // endpoint 0: control transfers
+  uchar *inctx;    // input context: what software asks for (xHCI 6.2.5)
+  uchar *outctx;   // device context: the controller's view (xHCI 6.2.1)
+  uchar *buf;      // DMA buffer for control transfers
+  // the result of the last control transfer, set by Xhci::poll().
+  volatile bool ctldone;
+  volatile int ctlcc;
 };
 
 // one xHCI controller. a PC may have several (AMD chipsets often
@@ -52,6 +88,15 @@ public:
   bool init(int bus, int dev, int func);
   void poll();    // handle events from the controller
   void service(); // handle connected and disconnected ports
+
+  // used by usb.cpp to set up devices.
+  UsbDev *newdev(int speed, int rootport, uint32 route, int depth,
+                 int ttslot, int ttport);
+  void freedev(UsbDev *d);
+  bool addressdevice(UsbDev &d);
+  bool setmps0(UsbDev &d);
+  bool control(UsbDev &d, uchar reqtype, uchar req, ushort value,
+               ushort index, ushort len, void *data);
   int id;
 
 private:
@@ -73,6 +118,8 @@ private:
   Trb *evring;      // event ring, one segment (xHCI 4.9.4)
   int evidx;
   uint32 evcycle;
+  UsbDev *devs[MAXSLOTS + 1];
+  UsbDev *rootdev[MAXPORTS + 1]; // device on each port, if any
   bool porthandled[MAXPORTS + 1]; // the port's device was looked at
   uint64 portpending;            // ports with a status change to handle
 
@@ -97,7 +144,10 @@ private:
   bool resetport(int port);
   void portchange(int port);
   int command(uint64 param, uint32 status, uint32 control);
+  void resetep(UsbDev &d, int dci, Ring &ring);
   void event(Trb *e);
+  uint32 *ictx(UsbDev &d, int i) { return (uint32 *)(d.inctx + i * csz); }
+  uint32 *octx(UsbDev &d, int i) { return (uint32 *)(d.outctx + i * csz); }
 
   // wait up to ms milliseconds for done() to be true, handling
   // events meanwhile.
@@ -114,3 +164,7 @@ private:
     return true;
   }
 };
+
+// usb.cpp
+void usbattach(Xhci &hc, int speed, int rootport, uint32 route, int depth,
+               int ttslot, int ttport, UsbDev **out);

@@ -8,7 +8,7 @@
 // [platform: real PC] works with a PS/2 keyboard, or with a USB
 // keyboard if the firmware's "legacy USB support" keeps emulating
 // PS/2 after the kernel starts (many do not, especially with CSM
-// off); steps 7-10 add a USB driver for those. with no controller at all, the
+// off); usb.cpp handles those. with no controller at all, the
 // ports read 0xFF on most PCs, but other junk on some (0x55 on
 // one test PC); see kbdgetc() and kbdintr().
 //

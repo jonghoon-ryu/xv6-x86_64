@@ -90,6 +90,12 @@ dmapage()
   return p;
 }
 
+static void
+dmafreepage(void *p)
+{
+  *(uint64 *)p = dmafree;
+  dmafree = (uint64)p;
+}
 
 // [platform: real PC] the kernel still runs on the firmware's page
 // tables, which map RAM but need not map every device. check that
@@ -382,13 +388,6 @@ Xhci::init(int bus, int dev, int func)
     portpending |= 1ull << (p - 1);
   }
   microdelay(20 * 1000);
-
-  // step 7 only: one command that does nothing, to see that the
-  // command ring, the doorbell and the event ring all work.
-  if (command(0, 0, TRB_NOOP_COMMAND << 10) == CC_SUCCESS)
-    printk("xhci%d: running: a No Op command came back\n", id);
-  else
-    printk("xhci%d: the No Op command failed\n", id);
   return true;
 }
 
@@ -439,6 +438,19 @@ Xhci::event(Trb *e)
     int port = (e->param >> 24) & 0xFF;
     if (port >= 1 && port <= nports)
       portpending |= 1ull << (port - 1);
+  } else if (type == TRB_TRANSFER_EVENT) {
+    int dci = (e->control >> 16) & 0x1F;
+    UsbDev *d = slot <= nslots ? devs[slot] : nullptr;
+    if (d == nullptr)
+      return;
+    if (dci == 1) {
+      // a control transfer: the status stage finished (success),
+      // or some stage failed. a short data stage is not an end.
+      if (cc != CC_SHORT_PACKET) {
+        d->ctlcc = cc;
+        d->ctldone = true;
+      }
+    }
   }
 }
 
@@ -481,8 +493,13 @@ Xhci::portchange(int port)
   setportsc(port, neutral(v) | (v & PORT_CHANGES)); // acknowledge changes
 
   if ((v & PORT_CCS) == 0) {
-    if (porthandled[port])
-      printk("xhci%d: port %d: disconnected\n", id, port);
+    if (rootdev[port])
+      printk("usb: device on port %d disconnected\n", port);
+    // the device, and anything on it if it was a hub.
+    for (int s = 1; s <= nslots; s++)
+      if (devs[s] && devs[s]->rootport == port)
+        freedev(devs[s]);
+    rootdev[port] = nullptr;
     porthandled[port] = false;
     return;
   }
@@ -507,10 +524,7 @@ Xhci::portchange(int port)
     return;
   }
   int speed = (portsc(port) >> 10) & 0xF;
-  // step 7: say what is there; step 8 will set it up.
-  static const char *names[] = { "?", "full", "low", "high", "super" };
-  printk("xhci%d: port %d: a USB 2 device, %s speed\n", id, port,
-         speed <= 4 ? names[speed] : "?");
+  usbattach(*this, speed, port, 0, 0, 0, 0, &rootdev[port]);
 }
 
 // set up newly connected devices, forget disconnected ones.
@@ -523,6 +537,145 @@ Xhci::service()
     portpending &= ~(1ull << (p - 1));
     portchange(p);
   }
+}
+
+// ---------------------------------------------------------------
+// devices (xHCI 4.3)
+
+// a new device: a slot from the controller, and its memory.
+UsbDev *
+Xhci::newdev(int speed, int rootport, uint32 route, int depth, int ttslot,
+             int ttport)
+{
+  if (command(0, 0, TRB_ENABLE_SLOT << 10) != CC_SUCCESS)
+    return nullptr;
+  int slot = cmdslot;
+  if (slot < 1 || slot > nslots) {
+    printk("xhci%d: slot %d out of range\n", id, slot);
+    return nullptr;
+  }
+
+  auto d = (UsbDev *)dmapage(); // zeroed; one page is plenty
+  d->hc = this;
+  d->slot = slot;
+  d->speed = speed;
+  d->rootport = rootport;
+  d->route = route;
+  d->depth = depth;
+  d->ttslot = ttslot;
+  d->ttport = ttport;
+  // the largest packet endpoint 0 surely accepts; for full speed
+  // the real size is in the device descriptor (see usbattach()).
+  d->mps0 = speed == SPEED_SUPER ? 512 : speed == SPEED_HIGH ? 64 : 8;
+  d->ep0.init();
+  d->inctx = (uchar *)dmapage();
+  d->outctx = (uchar *)dmapage();
+  d->buf = (uchar *)dmapage();
+  dcbaa[slot] = (uint64)d->outctx;
+  devs[slot] = d;
+  return d;
+}
+
+void
+Xhci::freedev(UsbDev *d)
+{
+  command(0, 0, (TRB_DISABLE_SLOT << 10) | (d->slot << 24));
+  devs[d->slot] = nullptr;
+  dcbaa[d->slot] = 0;
+  dmafreepage(d->ep0.trb);
+  dmafreepage(d->inctx);
+  dmafreepage(d->outctx);
+  dmafreepage(d->buf);
+  dmafreepage(d);
+}
+
+// fill in the input context's endpoint 0 (xHCI 6.2.3).
+static void
+ep0ctx(uint32 *ep, UsbDev &d)
+{
+  ep[1] = (3 << 1) | (4 << 3) | (d.mps0 << 16); // 3 retries, type Control
+  uint64 deq = (uint64)d.ep0.trb | 1;
+  ep[2] = (uint32)deq;
+  ep[3] = (uint32)(deq >> 32);
+  ep[4] = 8; // average TRB length
+}
+
+// give the device its address (xHCI 4.3.4): the controller sends
+// it SET_ADDRESS, and starts endpoint 0.
+bool
+Xhci::addressdevice(UsbDev &d)
+{
+  memset(d.inctx, 0, PGSIZE);
+  ictx(d, 0)[1] = (1 << 0) | (1 << 1); // add the slot and endpoint 0
+  uint32 *s = ictx(d, 1);
+  s[0] = d.route | (d.speed << 20) | (1 << 27); // 1 context entry
+  s[1] = d.rootport << 16;
+  s[2] = d.ttslot | (d.ttport << 8);
+  ep0ctx(ictx(d, 2), d);
+  int cc = command((uint64)d.inctx, 0, (TRB_ADDRESS_DEVICE << 10) | (d.slot << 24));
+  if (cc != CC_SUCCESS)
+    printk("usb: address device failed (%d)\n", cc);
+  return cc == CC_SUCCESS;
+}
+
+// tell the controller endpoint 0's real packet size (xHCI 4.6.7).
+bool
+Xhci::setmps0(UsbDev &d)
+{
+  memset(d.inctx, 0, PGSIZE);
+  ictx(d, 0)[1] = 1 << 1; // endpoint 0
+  ep0ctx(ictx(d, 2), d);
+  return command((uint64)d.inctx, 0,
+                 (TRB_EVALUATE_CONTEXT << 10) | (d.slot << 24)) == CC_SUCCESS;
+}
+
+// after a STALL the endpoint is halted: restart it, and continue
+// after the failed TRBs (xHCI 4.6.8, 4.6.10).
+void
+Xhci::resetep(UsbDev &d, int dci, Ring &ring)
+{
+  command(0, 0, (TRB_RESET_EP << 10) | (dci << 16) | (d.slot << 24));
+  command(ring.dequeue(), 0,
+          (TRB_SET_TR_DEQUEUE << 10) | (dci << 16) | (d.slot << 24));
+}
+
+// a control transfer on endpoint 0 (xHCI 4.11.2.2): a setup
+// stage, an optional data stage of len bytes, and a status stage.
+bool
+Xhci::control(UsbDev &d, uchar reqtype, uchar req, ushort value, ushort index,
+              ushort len, void *data)
+{
+  constexpr uint32 IDT = 1 << 6, IOC = 1 << 5, DIR_IN = 1 << 16;
+  bool in = reqtype & 0x80;
+  if (len > PGSIZE)
+    return false;
+
+  uint64 setup = reqtype | (req << 8) | ((uint64)value << 16) |
+                 ((uint64)index << 32) | ((uint64)len << 48);
+  uint32 trt = len == 0 ? 0 : in ? 3 : 2; // transfer type: none, OUT, IN
+  d.ep0.push(setup, 8, (TRB_SETUP << 10) | IDT | (trt << 16));
+  if (len > 0) {
+    if (!in)
+      memmove(d.buf, data, len);
+    d.ep0.push((uint64)d.buf, len, (TRB_DATA << 10) | (in ? DIR_IN : 0));
+  }
+  // the status stage goes the other way from the data.
+  d.ep0.push(0, 0, (TRB_STATUS << 10) | IOC | (len > 0 && in ? 0 : DIR_IN));
+
+  d.ctldone = false;
+  db[d.slot] = 1; // endpoint 0's doorbell
+  if (!wait([&] { return d.ctldone; }, 1000)) {
+    printk("usb: request %x timed out\n", req);
+    return false;
+  }
+  if (d.ctlcc != CC_SUCCESS) {
+    // a STALL is the device saying "not supported".
+    resetep(d, 1, d.ep0);
+    return false;
+  }
+  if (in && len > 0)
+    memmove(data, d.buf, len);
+  return true;
 }
 
 

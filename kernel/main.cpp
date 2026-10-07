@@ -68,7 +68,7 @@ main()
   consoleinit();
   earlytrapinit(); // [platform: real PC] show CPU exceptions, not a reboot
   printk("\n");
-  printk("xv6 kernel is booting (C++, step 7)\n");
+  printk("xv6 kernel is booting (C++, step 8)\n");
   printk("\n");
   printbootinfo();
   kbdinit(); // PS/2 keyboard
