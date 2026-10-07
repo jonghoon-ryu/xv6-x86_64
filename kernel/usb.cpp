@@ -1,7 +1,11 @@
 //
-// USB devices: read what a new device is (its descriptors), and
-// say so. xhci.cpp does the talking to the controller. step 9
-// makes keyboards type; step 10 adds hubs.
+// USB devices: read what a new device is (its descriptors), set up
+// hubs and keyboards, and turn keyboard reports into characters
+// for consoleintr(). xhci.cpp does the talking to the controller.
+//
+// keyboards are used in the "boot protocol" (USB HID 1.11,
+// appendix B): a fixed 8-byte report that every keyboard supports
+// so that PC firmware can use it without a full HID parser.
 //
 // not in the C version.
 //
@@ -14,6 +18,10 @@
 
 // standard requests (USB 2.0 9.4).
 constexpr uchar GET_DESCRIPTOR = 6;
+constexpr uchar SET_CONFIGURATION = 9;
+// HID class requests (USB HID 1.11 7.2).
+constexpr uchar SET_IDLE = 0x0A;
+constexpr uchar SET_PROTOCOL = 0x0B;
 
 // descriptor types.
 constexpr uchar DESC_DEVICE = 1;
@@ -67,6 +75,47 @@ findkbd(uchar *c, int len)
   return k;
 }
 
+// the controller's interval (2^n x 125 us, xHCI 6.2.3.6) from the
+// endpoint descriptor's bInterval, which counts milliseconds at
+// low and full speed and is already an exponent at high speed.
+static int
+xinterval(int speed, int binterval)
+{
+  if (speed == SPEED_HIGH || speed == SPEED_SUPER) {
+    int n = binterval - 1;
+    return n < 0 ? 0 : n > 15 ? 15 : n;
+  }
+  int n = 3; // 1 ms
+  while (n < 10 && (1 << (n + 1)) <= binterval * 8)
+    n++;
+  return n;
+}
+
+static bool
+kbdsetup(UsbDev &d, const KbdInfo &k, int config)
+{
+  Xhci &hc = *d.hc;
+  int dci = 2 * k.ep + 1; // device context index of an IN endpoint
+  int mps = k.mps > 64 ? 64 : k.mps;
+  d.kbdiface = k.iface;
+  d.kbddci = dci;
+  d.kbdmps = mps;
+  if (!hc.configep(d, dci, 7, mps, xinterval(d.speed, k.interval))) // 7: interrupt IN
+    return false;
+  if (!hc.control(d, 0x00, SET_CONFIGURATION, config, 0, 0, nullptr))
+    return false;
+  // boot protocol (0). keyboards start in it after a reset, but
+  // the firmware may have switched this one to report protocol.
+  if (!hc.control(d, 0x21, SET_PROTOCOL, 0, k.iface, 0, nullptr))
+    printk("usb: keyboard refused SET_PROTOCOL\n");
+  // report only when keys change. many keyboards refuse; harmless.
+  hc.control(d, 0x21, SET_IDLE, 0, k.iface, 0, nullptr);
+  d.report = d.buf + 2048; // control transfers use the first half
+  memset(d.prev, 0, sizeof(d.prev));
+  d.kbd = true;
+  hc.queuein(d);
+  return true;
+}
 
 // a device appeared on a port: on the controller's own port
 // rootport if route is 0, else behind hubs (xHCI 4.3).
@@ -119,6 +168,7 @@ usbattach(Xhci &hc, int speed, int rootport, uint32 route, int depth,
       printk("\n");
       goto fail;
     }
+    int config = head[5];
 
     if (cls == 9) {
       printk(", a hub: ignored (hubs come in step 10)\n");
@@ -132,8 +182,11 @@ usbattach(Xhci &hc, int speed, int rootport, uint32 route, int depth,
       hc.freedev(d);
       return;
     }
-    printk(", a keyboard (typing comes in step 9)\n");
+    printk(", a keyboard\n");
+    if (!kbdsetup(*d, k, config))
+      goto fail;
     *out = d;
+    printk("usb: keyboard ready: type on it\n");
     return;
   }
 
@@ -143,3 +196,78 @@ fail:
 }
 
 
+// ---------------------------------------------------------------
+// keyboard reports
+
+// HID usage IDs 0x04-0x38 (USB HID Usage Tables, section 10), as
+// characters, without and with shift.
+static const char usbmap[2][0x39] = {
+  { 0,    0,    0,    0,    'a',  'b',  'c',  'd',  'e',  'f',  'g',  'h',
+    'i',  'j',  'k',  'l',  'm',  'n',  'o',  'p',  'q',  'r',  's',  't',
+    'u',  'v',  'w',  'x',  'y',  'z',  '1',  '2',  '3',  '4',  '5',  '6',
+    '7',  '8',  '9',  '0',  '\n', 0x1B, '\b', '\t', ' ',  '-',  '=',  '[',
+    ']',  '\\', '\\', ';',  '\'', '`',  ',',  '.',  '/' },
+  { 0,    0,    0,    0,    'A',  'B',  'C',  'D',  'E',  'F',  'G',  'H',
+    'I',  'J',  'K',  'L',  'M',  'N',  'O',  'P',  'Q',  'R',  'S',  'T',
+    'U',  'V',  'W',  'X',  'Y',  'Z',  '!',  '@',  '#',  '$',  '%',  '^',
+    '&',  '*',  '(',  ')',  '\n', 0x1B, '\b', '\t', ' ',  '_',  '+',  '{',
+    '}',  '|',  '|',  ':',  '"',  '~',  '<',  '>',  '?' },
+};
+
+// the keypad (usage IDs 0x54-0x63), as if Num Lock were on.
+static const char keypad[] = "/*-+\n1234567890.";
+
+constexpr int KEY_CAPSLOCK = 0x39;
+constexpr uchar MOD_CTRL = 0x11;  // left or right Ctrl
+constexpr uchar MOD_SHIFT = 0x22; // left or right Shift
+
+static int
+usbkey(int usage, uchar mod)
+{
+  static bool capslock;
+  int c = 0;
+  if (usage == KEY_CAPSLOCK) {
+    capslock = !capslock;
+    return 0;
+  }
+  if (usage < 0x39)
+    c = usbmap[(mod & MOD_SHIFT) ? 1 : 0][usage];
+  else if (usage >= 0x54 && usage <= 0x63)
+    c = keypad[usage - 0x54];
+  if (capslock && 'a' <= c && c <= 'z')
+    c += 'A' - 'a';
+  else if (capslock && 'A' <= c && c <= 'Z')
+    c += 'a' - 'A';
+  if ((mod & MOD_CTRL) && c >= '@' && c < 0x7F)
+    c &= 0x1F; // Ctrl-A is 1, as C('A') in console.cpp
+  return c;
+}
+
+// a report arrived: modifier bits, a reserved byte, then up to 6
+// keys held down. a key is new if it was not in the last report.
+// (the keyboard sends nothing while a key stays down, so holding
+// a key does not repeat it: that needs a timer, which comes later.)
+void
+usbkbdreport(UsbDev &d, int len)
+{
+  uchar *r = d.report;
+  if (len < 3 || r[2] == 1) // 1: too many keys down at once
+    return;
+  if (len > 8)
+    len = 8;
+  for (int i = 2; i < len; i++) {
+    if (r[i] == 0)
+      continue;
+    bool old = false;
+    for (int j = 2; j < 8; j++)
+      if (d.prev[j] == r[i])
+        old = true;
+    if (!old) {
+      int c = usbkey(r[i], r[0]);
+      if (c != 0)
+        consoleintr(c);
+    }
+  }
+  memset(d.prev, 0, sizeof(d.prev));
+  memmove(d.prev, r, len);
+}

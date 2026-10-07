@@ -17,6 +17,7 @@ struct Trb {
 };
 
 // TRB types (xHCI 6.4.6).
+constexpr uint32 TRB_NORMAL = 1;
 constexpr uint32 TRB_SETUP = 2;
 constexpr uint32 TRB_DATA = 3;
 constexpr uint32 TRB_STATUS = 4;
@@ -24,6 +25,7 @@ constexpr uint32 TRB_LINK = 6;
 constexpr uint32 TRB_ENABLE_SLOT = 9;
 constexpr uint32 TRB_DISABLE_SLOT = 10;
 constexpr uint32 TRB_ADDRESS_DEVICE = 11;
+constexpr uint32 TRB_CONFIGURE_EP = 12;
 constexpr uint32 TRB_EVALUATE_CONTEXT = 13;
 constexpr uint32 TRB_RESET_EP = 14;
 constexpr uint32 TRB_SET_TR_DEQUEUE = 16;
@@ -79,6 +81,15 @@ struct UsbDev {
   // the result of the last control transfer, set by Xhci::poll().
   volatile bool ctldone;
   volatile int ctlcc;
+
+  // if the device is a keyboard: its interrupt IN endpoint.
+  bool kbd;
+  int kbdiface;  // interface number
+  int kbddci;    // device context index of the endpoint
+  int kbdmps;    // maximum packet size
+  Ring kbdring;
+  uchar *report; // DMA buffer for one key report
+  uchar prev[8]; // the previous report, to see which keys are new
 };
 
 // one xHCI controller. a PC may have several (AMD chipsets often
@@ -97,6 +108,8 @@ public:
   bool setmps0(UsbDev &d);
   bool control(UsbDev &d, uchar reqtype, uchar req, ushort value,
                ushort index, ushort len, void *data);
+  bool configep(UsbDev &d, int dci, int type, int mps, int interval);
+  void queuein(UsbDev &d);
   int id;
 
 private:
@@ -168,3 +181,4 @@ private:
 // usb.cpp
 void usbattach(Xhci &hc, int speed, int rootport, uint32 route, int depth,
                int ttslot, int ttport, UsbDev **out);
+void usbkbdreport(UsbDev &d, int len);

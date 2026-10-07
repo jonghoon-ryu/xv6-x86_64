@@ -68,7 +68,7 @@ main()
   consoleinit();
   earlytrapinit(); // [platform: real PC] show CPU exceptions, not a reboot
   printk("\n");
-  printk("xv6 kernel is booting (C++, step 8)\n");
+  printk("xv6 kernel is booting (C++, step 9)\n");
   printk("\n");
   printbootinfo();
   kbdinit(); // PS/2 keyboard
@@ -78,8 +78,8 @@ main()
 
   // [platform: QEMU, VirtualBox] keys come from the PS/2 keyboard
   // (the window) and from the serial port (make qemu's terminal).
-  // [platform: real PC] only a PS/2 keyboard, or a USB keyboard
-  // that the firmware still emulates as PS/2; see kbd.cpp.
+  // [platform: real PC] a PS/2 keyboard, or a USB keyboard
+  // (usbintr()), from whichever is there.
   // unlike hlt, this loop keeps the CPU 100% busy; interrupts
   // (later steps) will let it sleep until a key arrives.
   for (;;) {

@@ -450,6 +450,13 @@ Xhci::event(Trb *e)
         d->ctlcc = cc;
         d->ctldone = true;
       }
+    } else if (d->kbd && dci == d->kbddci) {
+      if (cc == CC_SUCCESS || cc == CC_SHORT_PACKET) {
+        usbkbdreport(*d, d->kbdmps - (e->status & 0xFFFFFF));
+        queuein(*d);
+      } else {
+        printk("usb: keyboard error %d; keyboard stopped\n", cc);
+      }
     }
   }
 }
@@ -586,6 +593,8 @@ Xhci::freedev(UsbDev *d)
   dmafreepage(d->inctx);
   dmafreepage(d->outctx);
   dmafreepage(d->buf);
+  if (d->kbd)
+    dmafreepage(d->kbdring.trb);
   dmafreepage(d);
 }
 
@@ -678,6 +687,46 @@ Xhci::control(UsbDev &d, uchar reqtype, uchar req, ushort value, ushort index,
   return true;
 }
 
+// add an interrupt or bulk endpoint (xHCI 4.6.6). interval is in
+// the controller's units: 2^interval x 125 microseconds.
+bool
+Xhci::configep(UsbDev &d, int dci, int type, int mps, int interval)
+{
+  memset(d.inctx, 0, PGSIZE);
+  ictx(d, 0)[1] = (1 << 0) | (1 << dci);
+  uint32 *s = ictx(d, 1);
+  memmove(s, octx(d, 0), csz); // the slot context as it is now
+  uint32 entries = s[0] >> 27;
+  if ((uint32)dci > entries)
+    entries = dci;
+  s[0] = (s[0] & ~(0x1Fu << 27)) | (entries << 27);
+  s[3] = 0;
+
+  Ring &r = d.kbdring;
+  r.init();
+  uint32 *ep = ictx(d, dci + 1);
+  ep[0] = interval << 16;
+  ep[1] = (3 << 1) | (type << 3) | (mps << 16);
+  uint64 deq = (uint64)r.trb | 1;
+  ep[2] = (uint32)deq;
+  ep[3] = (uint32)(deq >> 32);
+  ep[4] = mps | (mps << 16); // average TRB length; max payload per interval
+  int cc = command((uint64)d.inctx, 0, (TRB_CONFIGURE_EP << 10) | (d.slot << 24));
+  if (cc != CC_SUCCESS)
+    printk("usb: configure endpoint failed (%d)\n", cc);
+  return cc == CC_SUCCESS;
+}
+
+// ask the keyboard for its next report. the device answers only
+// when a key goes down or up; until then the controller keeps
+// asking it, without the CPU.
+void
+Xhci::queuein(UsbDev &d)
+{
+  constexpr uint32 ISP = 1 << 2, IOC = 1 << 5;
+  d.kbdring.push((uint64)d.report, d.kbdmps, (TRB_NORMAL << 10) | ISP | IOC);
+  db[d.slot] = d.kbddci;
+}
 
 // ---------------------------------------------------------------
 // the rest of the kernel sees only these.
