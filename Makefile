@@ -15,7 +15,8 @@ OBJS = \
   $K/pci.o \
   $K/printk.o \
   $K/string.o \
-  $K/uart.o
+  $K/uart.o \
+  $K/xhci.o
 
 # the kernel is built with the host's x86-64 g++ and binutils;
 # the UEFI loader with clang and lld, which can produce the

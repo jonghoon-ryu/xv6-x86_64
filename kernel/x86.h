@@ -177,6 +177,28 @@ outl(ushort port, uint32 data)
   asm volatile("outl %0, %1" : : "a"(data), "d"(port));
 }
 
+// the time stamp counter: counts up at a fixed rate, the CPU's
+// base frequency on modern CPUs.
+static inline uint64
+rdtsc()
+{
+  uint32 lo, hi;
+  asm volatile("rdtsc" : "=a"(lo), "=d"(hi));
+  return ((uint64)hi << 32) | lo;
+}
+
+// wait at least us microseconds. there is no timer yet, so this
+// assumes the TSC counts at most 5 GHz: on a slower CPU it waits
+// longer than asked, never shorter, which is all a driver's
+// "wait at least ..." needs.
+static inline void
+microdelay(uint64 us)
+{
+  uint64 end = rdtsc() + us * 5000;
+  while (rdtsc() < end)
+    asm volatile("pause");
+}
+
 // the pseudo-descriptor used by lgdt and lidt.
 struct dtr {
   ushort limit;
