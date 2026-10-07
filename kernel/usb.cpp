@@ -17,6 +17,9 @@
 #include "xhci.h"
 
 // standard requests (USB 2.0 9.4).
+constexpr uchar GET_STATUS = 0;
+constexpr uchar CLEAR_FEATURE = 1;
+constexpr uchar SET_FEATURE = 3;
 constexpr uchar GET_DESCRIPTOR = 6;
 constexpr uchar SET_CONFIGURATION = 9;
 // HID class requests (USB HID 1.11 7.2).
@@ -28,7 +31,15 @@ constexpr uchar DESC_DEVICE = 1;
 constexpr uchar DESC_CONFIG = 2;
 constexpr uchar DESC_INTERFACE = 4;
 constexpr uchar DESC_ENDPOINT = 5;
+constexpr uchar DESC_HUB = 0x29;
 
+// hub port features and status bits (USB 2.0 11.24.2).
+constexpr ushort PORT_RESET = 4;
+constexpr ushort PORT_POWER = 8;
+constexpr ushort C_PORT_CONNECTION = 16;
+constexpr ushort C_PORT_RESET = 20;
+
+constexpr int MAXDEPTH = 5; // hubs on the way, at most (USB 2.0 4.1.1)
 
 static const char *
 speedname(int speed)
@@ -41,6 +52,8 @@ speedname(int speed)
   }
   return "unknown";
 }
+
+static void hub(UsbDev &d, int nports, int ttt);
 
 // a keyboard's interrupt IN endpoint, found in the configuration.
 struct KbdInfo {
@@ -171,8 +184,19 @@ usbattach(Xhci &hc, int speed, int rootport, uint32 route, int depth,
     int config = head[5];
 
     if (cls == 9) {
-      printk(", a hub: ignored (hubs come in step 10)\n");
-      hc.freedev(d);
+      printk(", a hub\n");
+      if (depth >= MAXDEPTH ||
+          !hc.control(*d, 0x00, SET_CONFIGURATION, config, 0, 0, nullptr))
+        goto fail;
+      uchar hd[9];
+      if (!hc.control(*d, 0xA0, GET_DESCRIPTOR, DESC_HUB << 8, 0, 9, hd))
+        goto fail;
+      int nports = hd[2];
+      int ttt = (hd[3] >> 5) & 3; // TT think time
+      if (!hc.sethub(*d, nports, ttt))
+        goto fail;
+      *out = d;
+      hub(*d, nports, hd[5]);
       return;
     }
 
@@ -195,6 +219,60 @@ fail:
   hc.freedev(d);
 }
 
+// a hub's own port status (USB 2.0 11.24.2.7): wPortStatus in the
+// low 16 bits, wPortChange in the high 16.
+static bool
+hubportstatus(UsbDev &d, int port, uint32 *st)
+{
+  uchar b[4];
+  if (!d.hc->control(d, 0xA3, GET_STATUS, 0, port, 4, b))
+    return false;
+  *st = b[0] | (b[1] << 8) | (b[2] << 16) | (b[3] << 24);
+  return true;
+}
+
+// set up the devices on a hub's ports. only those connected now:
+// xv6 does not watch hubs for devices plugged in later.
+static void
+hub(UsbDev &d, int nports, int pwrgood)
+{
+  Xhci &hc = *d.hc;
+  for (int p = 1; p <= nports; p++)
+    hc.control(d, 0x23, SET_FEATURE, PORT_POWER, p, 0, nullptr);
+  microdelay((pwrgood * 2 + 100) * 1000); // power on, then let devices connect
+
+  for (int p = 1; p <= nports && p <= 15; p++) {
+    uint32 st;
+    if (!hubportstatus(d, p, &st) || (st & 1) == 0) // bit 0: connected
+      continue;
+    hc.control(d, 0x23, CLEAR_FEATURE, C_PORT_CONNECTION, p, 0, nullptr);
+    hc.control(d, 0x23, SET_FEATURE, PORT_RESET, p, 0, nullptr);
+    bool done = false;
+    for (int i = 0; i < 50 && !done; i++) {
+      microdelay(10 * 1000);
+      done = hubportstatus(d, p, &st) && (st & (1 << (16 + 4))); // reset changed
+    }
+    if (!done || (st & 2) == 0) { // bit 1: enabled
+      printk("usb: hub port %d does not enable\n", p);
+      continue;
+    }
+    hc.control(d, 0x23, CLEAR_FEATURE, C_PORT_RESET, p, 0, nullptr);
+    microdelay(10 * 1000); // reset recovery
+
+    int speed = (st & (1 << 9)) ? SPEED_LOW : (st & (1 << 10)) ? SPEED_HIGH : SPEED_FULL;
+    // a low or full speed device behind a high speed hub talks
+    // through the hub's Transaction Translator; behind a full
+    // speed hub, through whatever translator that hub uses.
+    int ttslot = d.ttslot, ttport = d.ttport;
+    if (d.speed == SPEED_HIGH && speed != SPEED_HIGH) {
+      ttslot = d.slot;
+      ttport = p;
+    }
+    UsbDev *child = nullptr;
+    usbattach(hc, speed, d.rootport, d.route | (p << (4 * d.depth)), d.depth + 1,
+              ttslot, ttport, &child);
+  }
+}
 
 // ---------------------------------------------------------------
 // keyboard reports

@@ -109,6 +109,7 @@ public:
   bool control(UsbDev &d, uchar reqtype, uchar req, ushort value,
                ushort index, ushort len, void *data);
   bool configep(UsbDev &d, int dci, int type, int mps, int interval);
+  bool sethub(UsbDev &d, int nports, int ttt);
   void queuein(UsbDev &d);
   int id;
 

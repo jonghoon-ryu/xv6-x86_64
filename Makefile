@@ -134,11 +134,11 @@ QEMUOPTS += -drive if=pflash,format=raw,file=ovmf_vars.fd
 QEMUOPTS += -drive format=raw,file=usb.img
 
 # [platform: QEMU] make qemu USB=1 adds a USB controller (xHCI)
-# with a USB keyboard. (QEMU's PS/2 keyboard is still there too:
-# add i8042=off to -machine to type through USB only.)
+# with a USB keyboard behind a USB hub, as on a real PC.
 ifeq ($(USB),1)
 QEMUOPTS += -device qemu-xhci,id=xhci
-QEMUOPTS += -device usb-kbd,bus=xhci.0
+QEMUOPTS += -device usb-hub,bus=xhci.0,port=1
+QEMUOPTS += -device usb-kbd,bus=xhci.0,port=1.1
 endif
 
 # [platform: QEMU]

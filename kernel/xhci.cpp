@@ -5,7 +5,7 @@
 // firmware's PS/2 emulation for USB keyboards stops when it hands
 // the machine to the kernel, so a USB keyboard needs this driver.
 // [platform: QEMU] make qemu USB=1 adds an xHCI controller with a
-// USB keyboard; without it, QEMU has no xHCI.
+// USB keyboard (and a hub); without it, QEMU has no xHCI.
 // [platform: VirtualBox] its xHCI needs the extension pack; the
 // VM uses the PS/2 keyboard.
 //
@@ -717,6 +717,25 @@ Xhci::configep(UsbDev &d, int dci, int type, int mps, int interval)
   return cc == CC_SUCCESS;
 }
 
+// tell the controller that a device is a hub (xHCI 4.6.6): it
+// needs this to reach the devices behind the hub.
+bool
+Xhci::sethub(UsbDev &d, int nports, int ttt)
+{
+  memset(d.inctx, 0, PGSIZE);
+  ictx(d, 0)[1] = 1 << 0; // just the slot context
+  uint32 *s = ictx(d, 1);
+  memmove(s, octx(d, 0), csz);
+  s[0] |= 1 << 26; // Hub
+  s[1] = (s[1] & 0x00FFFFFF) | (nports << 24);
+  s[2] = (s[2] & ~(3u << 16)) | (ttt << 16);
+  s[3] = 0;
+  int cc = command((uint64)d.inctx, 0, (TRB_CONFIGURE_EP << 10) | (d.slot << 24));
+  if (cc != CC_SUCCESS) // xHCI before 0.96 wants Evaluate Context instead
+    cc = command((uint64)d.inctx, 0, (TRB_EVALUATE_CONTEXT << 10) | (d.slot << 24));
+  return cc == CC_SUCCESS;
+}
+
 // ask the keyboard for its next report. the device answers only
 // when a key goes down or up; until then the controller keeps
 // asking it, without the CPU.
@@ -734,12 +753,30 @@ Xhci::queuein(UsbDev &d)
 static Xhci xhci[4];
 static int nxhci;
 
+// [platform: real PC] Intel 7, 8 and 9 series chipsets connect
+// each USB socket to either this controller or an older one
+// (EHCI), and the firmware may leave them on the old one. switch
+// every socket over (Linux: usb_enable_intel_xhci_ports()).
+static void
+intelroute(int bus, int dev, int func)
+{
+  uint32 ids = pciread(bus, dev, func, 0x00);
+  uint32 vendor = ids & 0xFFFF, device = ids >> 16;
+  if (vendor != 0x8086)
+    return;
+  if (device != 0x1E31 && device != 0x8C31 && device != 0x9C31 &&
+      device != 0x9CB1 && device != 0x8CB1)
+    return;
+  pciwrite(bus, dev, func, 0xD8, pciread(bus, dev, func, 0xDC)); // USB 3 sockets
+  pciwrite(bus, dev, func, 0xD0, pciread(bus, dev, func, 0xD4)); // USB 2 sockets
+}
 
 static void
 found(int bus, int dev, int func)
 {
   if (nxhci == 4)
     return;
+  intelroute(bus, dev, func);
   Xhci &hc = xhci[nxhci];
   hc.id = nxhci;
   if (hc.init(bus, dev, func))
